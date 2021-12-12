@@ -41,7 +41,7 @@ release = '1.0.0'
 # ones.
 extensions = ['sphinxcontrib.napoleon', 'sphinx.ext.viewcode', 'breathe']
 
-breathe_projects = { "fisb_978" : "/share/fisb-c/docs/doxygen/xml" }
+breathe_projects = { "fisb_978" : "/share/fisb-978/docs/doxygen/xml" }
 
 breathe_default_project = "fisb_978"
 
