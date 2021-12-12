@@ -1,0 +1,10 @@
+demod_978.o
+demod_978
+*~
+#*
+__pycache__/*
+docs/source/_build
+docs/build
+docs/doxygen/html
+docs/doxygen/latex
+docs/doxygen/xml
