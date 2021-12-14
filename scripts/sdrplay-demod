@@ -11,4 +11,4 @@
 # If you just want to see decoded output printed, leave off '| ./server_978.py'.
 #
 rx_sdr -d driver=sdrplay -t biasT_ctrl=true,rfgain_sel=1 -g 25 -F CS16 \
-  -f 978000000 -s 2083334 - | ./demod_978 -af | ./ec_978.py | ./server_978.py
+  -f 978000000 -s 2083334 - | ./demod_978 | ./ec_978.py | ./server_978.py

@@ -100,6 +100,7 @@ writingErrorFiles = False
 #   fcr (First Consecutive Root): 120
 #   Primitive element: 1
 #   Number of roots: 20 (ADS-B short: 12, ADS-B long: 14)
+#    (same as the number of parity bits)
 rsAdsbS = rs.Reed_Solomon(8,18,30,0x187,120,1,12)
 rsAdsbL = rs.Reed_Solomon(8,34,48,0x187,120,1,14)
 rsFisb = rs.Reed_Solomon(8,72,92,0x187,120,1,20)

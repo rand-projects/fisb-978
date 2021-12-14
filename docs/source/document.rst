@@ -93,22 +93,17 @@ you have ``pip3``, just type: ::
  pip3 install numpy
 
 For Reed-Solomon, visit
-`https://pypi.org/project/pyreedsolomon/ <https://pypi.org/project/pyreedsolomon/>`_
-and read the instructions. Before installing it, install the
-library it requires. Download or clone from:
-`https://github.com/CyberLeo/reed-solomon <https://github.com/CyberLeo/reed-solomon>`_.
+`https://pypi.org/project/pyreedsolomon/ <https://pypi.org/project/pyreedsolomon/>`_.
+The best way to install this is **not** with pip3. Make a clone as follows: ::
 
-From the reed-solomon directory type: ::
+  # Do the following line only if you have it already installed
+  # or think you might.
+  sudo pip3 uninstall pyreedsolomon
 
-  ./autogen.sh
-  ./configure
-  make
-  sudo make install
+  git clone --recursive  https://github.com/epeters13/pyreedsolomon.git
+  cd pyreedsolomon
+  sudo python3 setup.py install
   sudo ldconfig
-
-Once that is installed you can type: ::
-
-  pip3 install pyreedsolomon
 
 ``ec_978.py`` should now have all the prerequisites installed.
 
@@ -130,7 +125,7 @@ in ``scripts/sdrplay-demod``: ::
  # If you just want to see decoded output printed, leave off '| ./server_978.py'.
  #
  rx_sdr -d driver=sdrplay -t biasT_ctrl=true,rfgain_sel=1 -g 25 -F CS16 \
-  -f 978000000 -s 2083334 - | ./demod_978 -af | ./ec_978.py | ./server_978.py
+  -f 978000000 -s 2083334 - | ./demod_978 | ./ec_978.py | ./server_978.py
 
 You will need to substitute your SDR program and settings. The settings must include
 the frequency, sample rate, and output type (*CS16*) shown above. You just pipe
@@ -472,10 +467,14 @@ at the Nyquist limit.
   Arguments:
  
    -a
-       Process ADS-B packets. One or both of -a and -f must be specified.
+       Process ADS-B packets only. If neither -a or -f are specified,
+       both ADS-B and FIS-B are processed. You cannot specify both
+       -a and -f at the same time.
   
    -f
-       Process FIS-B packets. One or both of -a and -f must be specified.
+       Process FIS-B packets only. If neither -a or -f are specified,
+       both ADS-B and FIS-B are processed. You cannot specify both
+       -a and -f at the same time.
   
    -l <float>
        Set the noise cutoff level. Data samples are stronger than the 

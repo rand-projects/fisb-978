@@ -671,13 +671,13 @@ inline void process_sample() {
  */
 void printUsageThenExit(const char *progName) {
   fprintf(stderr, "Usage: %s [-f] [-a] [-x] [-l level] -d <directory>]\n", progName);
-  fprintf(stderr, "-a          Capture ADS-B packets\n");
-  fprintf(stderr, "-f          Capture FIS-B packets\n");
-  fprintf(stderr, "             -one or both or -a or -f must be selected)\n");
-  fprintf(stderr, "-l <float>  Set noise cutoff to <float>\n");
-  fprintf(stderr, "             -default is 0.9\n");
+  fprintf(stderr, "-a          Capture ADS-B packets only.\n");
+  fprintf(stderr, "-f          Capture FIS-B packets only.\n");
+  fprintf(stderr, "             -if neither -a or -f, both FIS-B and ADS-B are processed.\n");
+  fprintf(stderr, "-l <float>  Set noise cutoff to <float>.\n");
+  fprintf(stderr, "             -default is 0.9.\n");
   fprintf(stderr, "-x          Set if reading from file and not real-time.\n");
-  fprintf(stderr, "             -will make arrival times unique\n");
+  fprintf(stderr, "             -will make arrival times unique.\n");
   exit(EXIT_FAILURE);
 }
 
@@ -715,9 +715,12 @@ int main(int argc, char *argv[]) {
   }
 
   // Must be processing one or both of FIS-B and ADS-B packets.
-  if (!doFisb && !doAdsb) {
-    fprintf(stderr, "One or both of -f and -a must be set.\n\n");
+  if (doFisb && doAdsb) {
+    fprintf(stderr, "Only one of -f and -a must be set. Use no flags for both ADS-B FIS-B to be processed.\n\n");
     printUsageThenExit(argv[0]);
+  } else if (!doFisb && !doAdsb) {
+    doFisb = true;
+    doAdsb = true;
   }
 
   // Threshold must be positive.
