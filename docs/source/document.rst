@@ -110,9 +110,10 @@ The best way to install this is **not** with pip3. Make a clone as follows: ::
 Initial Usage
 =============
 To use, you just pipe the output from your SDR program to
-'demod_978' and then to 'ec_978.py'. Optionally to the
+'demod_978' and then to 'ec_978.py'. Optionally, you can pipe
+it to
 'server_978.py' if you want to distribute it. Not including
-the server will send output to a terminal, which is a good
+the server will send the output to a terminal, which is a good
 place to start.
 
 Here is an example of a script I use for normal decoding (based on the
