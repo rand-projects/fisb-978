@@ -107,8 +107,13 @@ The best way to install this is **not** with pip3. Make a clone as follows: ::
 
 ``ec_978.py`` should now have all the prerequisites installed.
 
-Sample usage script
-===================
+Initial Usage
+=============
+To use, you just pipe the output from your SDR program to
+'demod_978' and then to 'ec_978.py'. Optionally to the
+'server_978.py' if you want to distribute it. Not including
+the server will send output to a terminal, which is a good
+place to start.
 
 Here is an example of a script I use for normal decoding (based on the
 *SDRplay RSP1A*). It can be found
@@ -128,10 +133,13 @@ in ``scripts/sdrplay-demod``: ::
  rx_sdr -d driver=sdrplay -t biasT_ctrl=true,rfgain_sel=1 -g 25 -F CS16 \
   -f 978000000 -s 2083334 - | ./demod_978 | ./ec_978.py | ./server_978.py
 
+Leave off 'server_978.py' when starting, so you can see the output on the
+terminal.
+
 You will need to substitute your SDR program and settings. The settings must include
 the frequency, sample rate, and output type (*CS16*) shown above. You just pipe
-the raw output through ``demod`` and ``ec_978.py``. This will give you the
-decoded hex strings for FIS-B and ADS-B. To serve it remotely, pipe that output to ``server_978.py``.
+the raw output through 'demod_978' and 'ec_978.py'. This will give you the
+decoded hex strings for FIS-B and ADS-B. To serve it remotely, pipe that output to 'server_978.py'.
 
 For an 8-bit *RTLSDR* or *RadarBox 978 FlightStick*, the above command can be modified
 as (also found in ``scripts/rtlsdr-demod``): ::
@@ -146,6 +154,53 @@ the next most important thing after a good antenna. I have found the
 to be an excellent performer. In the United States
 you can get them at `AIRSPY.us <https://v3.airspy.us/product/upu-fp978s/>`_
 (disclosure: I am not sponsored by any product, nor do I have affiliate links).
+
+When first starting, it is a good idea to explore your setup to find the
+best level (minimum signal strength)
+for 'demod_978'. By default, 'demod_978' is tuned for FIS-B
+and not ADS-B. It will not attempt to filter packets below a certain level.
+This is because if the level is set too low, you will get a huge number
+of noise packets that match the sync codes, but are just noise.
+This minimum level will be lower for ADS-B than for FIS-B.
+
+To see what levels your packets are successfully decoding at, set
+the minimum level in 'demod_978' to 0 with the ``-l 0`` argument, and
+turn on the *lowest levels* flag in 'ec_978.py' with ``--ll``. 
+The ``--ll`` argument will show the lowest level received for FIS-B
+and ADS-B separately. The output is sent to standard error, so
+best to pipe standard output to ``/dev/null`` so it doesn't get lost
+in decoded packets. For example: ::
+
+  <your SDR program> | ./demod_978 -l 0 | ./ec_978.py --ll >/dev/null
+  lowest ADS-B signal: 1.01
+  lowest ADS-B signal: 0.63
+  lowest FIS-B signal: 15.66
+  lowest FIS-B signal: 14.52
+  lowest FIS-B signal: 5.69
+  lowest FIS-B signal: 5.66
+  lowest FIS-B signal: 3.77
+  lowest FIS-B signal: 3.48
+  lowest FIS-B signal: 2.23
+  lowest ADS-B signal: 0.28
+  lowest ADS-B signal: 0.17
+  lowest FIS-B signal: 1.93
+
+In this example, the lowest FIS-B packet was at signal strength 1.93 and the
+lowest ADS-B packet was at 0.17. So if you are only interested in FIS-B, the
+default level of 0.9 should be fine. For ADS-B, something like 0.1 might work.
+This can be set in 'demod_978' with the ``-l`` argument.
+
+It should be noted that the Reed-Solomon error correction in ADS-B and
+FIS-B is not a guarantee that a message was decoded correctly. Reed-Solomon
+has a number of parity bytes (for our purposes, these are bytes, not bits).
+So if you have 14 bytes of parity (like in an ADS-B long message), that means it will
+detect and correct up to 7 errors that it finds, or 14 that you know exist. Or some
+combination of the above. *If the message actually has more errors than this,
+all bets are off, and Reed-Solomon may declare that the message is fine
+when it isn't*. None of these messages have a CRC code, or other error
+detection mechanism to double check that a decode is correct. So if you
+decode random noise, it is very possible to get valid Reed-Solomon certified
+garbage packets.
 
 Explanation of program output
 =============================
@@ -319,11 +374,13 @@ signal is present are much higher than when only noise is present. In order to
 even attempt to match a sync word, we must have a value greater than some number.
 In our case, the default (empirically derived) is 900000. To keep things simpler,
 all values are presented to the user in millionths. So 900000 is denoted as 0.9.
-This value probably does not apply to other SDR setups or amplifications. The
+This value doesn't not apply to other SDR setups or amplifications. The
 ``demod_978`` program will let the user set this with the ``-l`` argument. It is
-probably best to set this to ``-l 0.0`` and look at the results to set the best
-level. An improvement would be to sample for lowest noise values and use that to
-set a cutoff.
+probably best to set this to ``-l 0.0`` and look at the results to find the best
+level. The ``--ll`` argument in ``ec_978.py`` can help with this. Also note that
+'fisb_978', with the default level of 0.9, is tuned for FIS-B, not ADS-B. Levels
+of 0.1 (maybe lower) are required for full ADS-B decoding. The trade off for
+lower levels is up to a magnitude more garbage noise packets.
 
 Once we have matched a sync code, we will send 8835 32-bit signed integers for a
 FIS-B packet and 771 32-bit signed integers for an ADS-B packet. These numbers
@@ -534,6 +591,7 @@ ec_978.py
   -h, --help  show this help message and exit
   --ff        Print failed FIS-B packet information as a comment.
   --fa        Print failed ADS-B packet information as a comment.
+  --ll        Print lowest levels of FIS-B and ADS-B signal levels.
   --se SE     Directory to save failed error corrections.
   --re RE     Directory to reprocess errors.
 

@@ -92,6 +92,9 @@ show_failed_adsb = False
 dir_out_errors = None
 writingErrorFiles = False
 
+# Flag to show lowest usable signal levels. Set by --ll.
+show_lowest_levels = False
+
 # Reed-Solomon error correction Ground Uplink parameters:
 #   Symbol Size: 8
 #   Message Symbols: 72 (ADS-B short: 144, ADS-B long: 272)
@@ -770,6 +773,11 @@ def main():
   Output is sent either to standard output. If indicated (``-se``), errors 
   can be saved seperately.
   """
+  # Lowest signal level found for FIS-B and ADS-B.
+  # These start out as higher than we will ever see.
+  lowest_adsb_level = 1000000000
+  lowest_fisb_level = 1000000000
+  
   try:
     while True:
       # We alternate reading attributes and packets
@@ -790,9 +798,9 @@ def main():
       # Create time string and signal strength string from the
       # file components.
       timeStr = 't=' + splitName[0] + '.' + splitName[1][0:3]
-      signalStrengthString = 'ss=' + str(round(int(splitName[3]) \
-          / 1000000.0, 2))
-      
+      rawSignalStrength = round(int(splitName[3]) / 1000000.0, 2)
+      signalStrengthString = 'ss=' + str(rawSignalStrength)
+            
       # Extract sync errors
       syncErrors = splitName[4]
 
@@ -818,6 +826,18 @@ def main():
           signalStrengthString, syncErrors, attrStr)
 
       if didErrCorrect:
+        # If printing lowest levels, print to stderr if this is the
+        # lowest so far (for ADS-B and FIS-B independently).
+        if show_lowest_levels:
+          if isFisbPacket:
+            if rawSignalStrength < lowest_fisb_level:
+              lowest_fisb_level = rawSignalStrength
+              print(f'lowest FIS-B signal: {lowest_fisb_level}', flush=True, file=sys.stderr)
+          else:
+            if rawSignalStrength < lowest_adsb_level:
+              lowest_adsb_level = rawSignalStrength
+              print(f'lowest ADS-B signal: {lowest_adsb_level}', flush=True, file=sys.stderr)
+
         # Write to standard output.
         print(resultStr, flush=True)
 
@@ -930,6 +950,7 @@ are automatically set, and any '--se' argument is ignored."""
           
   parser.add_argument("--ff", help='Print failed FIS-B packet information as a comment.', action='store_true')
   parser.add_argument("--fa", help='Print failed ADS-B packet information as a comment.', action='store_true')
+  parser.add_argument("--ll", help='Print lowest levels of FIS-B and ADS-B signal levels.', action='store_true')
   parser.add_argument("--se", required=False, help='Directory to save failed error corrections.')
   parser.add_argument("--re", required=False, help='Directory to reprocess errors.')
 
@@ -940,6 +961,9 @@ are automatically set, and any '--se' argument is ignored."""
 
   if args.fa:
     show_failed_adsb = True
+
+  if args.ll:
+    show_lowest_levels = True
 
   if args.se:
     dir_out_errors = args.se
