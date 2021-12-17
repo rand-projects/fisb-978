@@ -762,7 +762,7 @@ def processAdsbPacket(samples, timeStr, signalStrengthStr, syncErrors, \
 
 def main():
   """
-  Process raw FIS-B and ADS-B demodulated samples from
+  Process raw FIS-B and ADS-B (short and long) demodulated samples from
   standard input (usually from ``demod_978``).
 
   We read a fixed length attribute string containing information
@@ -775,7 +775,8 @@ def main():
   """
   # Lowest signal level found for FIS-B and ADS-B.
   # These start out as higher than we will ever see.
-  lowest_adsb_level = 1000000000
+  lowest_adsbs_level = 1000000000
+  lowest_adsbl_level = 1000000000
   lowest_fisb_level = 1000000000
   
   try:
@@ -832,11 +833,16 @@ def main():
           if isFisbPacket:
             if rawSignalStrength < lowest_fisb_level:
               lowest_fisb_level = rawSignalStrength
-              print(f'lowest FIS-B signal: {lowest_fisb_level}', flush=True, file=sys.stderr)
+              print(f'lowest FIS-B     signal: {lowest_fisb_level}', flush=True, file=sys.stderr)
           else:
-            if rawSignalStrength < lowest_adsb_level:
-              lowest_adsb_level = rawSignalStrength
-              print(f'lowest ADS-B signal: {lowest_adsb_level}', flush=True, file=sys.stderr)
+            if len(resultStr) < 90:
+              if rawSignalStrength < lowest_adsbs_level:
+                lowest_adsbs_level = rawSignalStrength
+                print(f'lowest ADS-B (S) signal: {lowest_adsbs_level}', flush=True, file=sys.stderr)
+            else:
+              if rawSignalStrength < lowest_adsbl_level:
+                lowest_adsbl_level = rawSignalStrength
+                print(f'lowest ADS-B (L) signal: {lowest_adsbl_level}', flush=True, file=sys.stderr)
 
         # Write to standard output.
         print(resultStr, flush=True)

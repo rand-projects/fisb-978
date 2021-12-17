@@ -167,24 +167,24 @@ This minimum level will be lower for ADS-B than for FIS-B.
 To see what levels your packets are successfully decoding at, set
 the minimum level in 'demod_978' to 0 with the ``-l 0`` argument, and
 turn on the *lowest levels* flag in 'ec_978.py' with ``--ll``. 
-The ``--ll`` argument will show the lowest level received for FIS-B
-and ADS-B separately. The output is sent to standard error, so
+The ``--ll`` argument will show the lowest level received for FIS-B,
+ADS-B short, and ADS-B long. The output is sent to standard error, so
 best to pipe standard output to ``/dev/null`` so it doesn't get lost
 in decoded packets. For example: ::
 
   <your SDR program> | ./demod_978 -l 0 | ./ec_978.py --ll >/dev/null
-  lowest ADS-B signal: 1.01
-  lowest ADS-B signal: 0.63
-  lowest FIS-B signal: 15.66
-  lowest FIS-B signal: 14.52
-  lowest FIS-B signal: 5.69
-  lowest FIS-B signal: 5.66
-  lowest FIS-B signal: 3.77
-  lowest FIS-B signal: 3.48
-  lowest FIS-B signal: 2.23
-  lowest ADS-B signal: 0.28
-  lowest ADS-B signal: 0.17
-  lowest FIS-B signal: 1.93
+  lowest ADS-B (L) signal: 1.01
+  lowest ADS-B (S) signal: 0.63
+  lowest FIS-B     signal: 15.66
+  lowest FIS-B     signal: 14.52
+  lowest FIS-B     signal: 5.69
+  lowest FIS-B     signal: 5.66
+  lowest FIS-B     signal: 3.77
+  lowest FIS-B     signal: 3.48
+  lowest FIS-B     signal: 2.23
+  lowest ADS-B (S) signal: 0.28
+  lowest ADS-B (S) signal: 0.17
+  lowest FIS-B     signal: 1.93
 
 In this example, the lowest FIS-B packet was at signal strength 1.93 and the
 lowest ADS-B packet was at 0.17. So if you are only interested in FIS-B, the
