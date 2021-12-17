@@ -1,0 +1,14 @@
+#
+# Script used for using rx_sdr with rtlsdr to capture raw data
+# and send them to demod_978, ec_978, and server_978.
+#
+# You can change the first portion to reflect your SDR radio, but use the
+# following settings:
+#   frequency:          978 MHz
+#   sample rate:        2083334
+#   output type:        Complex 16 bit integer (usually called CS16)
+#
+# If you just want to see decoded output printed, leave off '| ./server_978.py'.
+#
+rx_sdr -d driver=rtlsdr -F CS16 -g 40 \
+  -f 978000000 -s 2083334 - | ./demod_978 | ./ec_978.py | ./server_978.py

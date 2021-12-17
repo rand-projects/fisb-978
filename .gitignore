@@ -8,3 +8,4 @@ docs/build
 docs/doxygen/html
 docs/doxygen/latex
 docs/doxygen/xml
+.vscode

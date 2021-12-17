@@ -110,7 +110,8 @@ The best way to install this is **not** with pip3. Make a clone as follows: ::
 Sample usage script
 ===================
 
-Here is an example of a script I use for normal decoding. It can be found
+Here is an example of a script I use for normal decoding (based on the
+*SDRplay RSP1A*). It can be found
 in ``scripts/sdrplay-demod``: ::
 
  # Script used for using rx_sdr with sdrplay to capture raw data
@@ -131,6 +132,20 @@ You will need to substitute your SDR program and settings. The settings must inc
 the frequency, sample rate, and output type (*CS16*) shown above. You just pipe
 the raw output through ``demod`` and ``ec_978.py``. This will give you the
 decoded hex strings for FIS-B and ADS-B. To serve it remotely, pipe that output to ``server_978.py``.
+
+For an 8-bit *RTLSDR* or *RadarBox 978 FlightStick*, the above command can be modified
+as (also found in ``scripts/rtlsdr-demod``): ::
+
+  rx_sdr -d driver=rtlsdr -F CS16 -g 40 \
+   -f 978000000 -s 2083334 - | ./demod_978  | ./ec_978.py | ./server_978.py
+
+You won't get the performance out of an 8-bit SDR as you will with something
+with a higher bit ADC. Also, for all radios, a good filtered preamp is
+the next most important thing after a good antenna. I have found the
+`Uputronics 978MHz UAT filtered preamp <https://store.uputronics.com/index.php?route=product/product&path=59&product_id=87>`_
+to be an excellent performer. In the United States
+you can get them at `AIRSPY.us <https://v3.airspy.us/product/upu-fp978s/>`_
+(disclosure: I am not sponsored by any product, nor do I have affiliate links).
 
 Explanation of program output
 =============================
