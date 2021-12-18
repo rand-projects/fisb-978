@@ -192,16 +192,26 @@ default level of 0.9 should be fine. For ADS-B, something like 0.1 might work.
 This can be set in 'demod_978' with the ``-l`` argument.
 
 It should be noted that the Reed-Solomon error correction in ADS-B and
-FIS-B is not a guarantee that a message was decoded correctly. Reed-Solomon
+FIS-B is not a guarantee that a message was decoded *correctly*. Reed-Solomon
 has a number of parity bytes (for our purposes, these are bytes, not bits).
 So if you have 14 bytes of parity (like in an ADS-B long message), that means it will
-detect and correct up to 7 errors that it finds, or 14 that you know exist. Or some
+detect and correct up to 7 error bytes that it finds, or 14 that you know exist (erasures). Or some
 combination of the above. *If the message actually has more errors than this,
 all bets are off, and Reed-Solomon may declare that the message is fine
 when it isn't*. None of these messages have a CRC code, or other error
 detection mechanism to double check that a decode is correct. So if you
-decode random noise, it is very possible to get valid Reed-Solomon certified
+decode random noise, it is very possible to get Reed-Solomon certified
 garbage packets.
+
+In FIS-B, there is an imperfect mechanism you can use to double check for
+a correct message. It isn't perfect, but it is better than nothing.
+In FIS-B, each message is made up of UAT Frames. Each frame comes with
+a length, and UAT Frames are chained together until the end of the total
+message. Either the frames will fit exactly in a message, or they will
+end before the end of the message. In which case the remainder of the
+message will be zeros. If a message doesn't pass this test, it isn't
+valid. Passing this test doesn't mean it's valid either, but the
+likelihood is much higher.
 
 Explanation of program output
 =============================
@@ -268,6 +278,18 @@ After that, separated by ';', are three items:
   Subtracting 500 from the number gives you the number of
   Reed-Solomon attempts for the new packet.
 
+  For a typical non-empty FIS-B packet, under good receiving conditions,
+  you will see lots of ``/006`` and the occasional ``/007``. ``/006``
+  means that it decoded all packets without any shifting. ``/007``
+  means that the first packet failed to decode, and the first shift
+  was used. The first shift worked, so for all remaining packets, the
+  last shift that worked was the first one tested, and the remaining 5 subparts all
+  decoded on the first try. The first shift tried after
+  no shift is ``-0.75``, which means
+  to shift the packet 75% to the set of bits after the current set of
+  bits. This is the empirically derived shift to deliver the most
+  decodes if no shift didn't work.
+
 * ``ss=3.76`` is the signal strength. It has no units and isn't related
   to anything. It is just a relative indication of the signal strength
   of the sync word. When data is read by ``demod_978``, the demodulated
@@ -287,6 +309,46 @@ After that, separated by ';', are three items:
   a sync word, we calculate the time by adding 0.48 microseconds per 
   sample for each bit from the time the disk was read, minus 0.48 * 72 bits
   so the time is reflected back to when the sync word was started.
+
+  So why do we care about message arrival times? There are two primary
+  reasons. First, having an arrival time allows you to replay
+  messages. The most important reason for this are the FIS-B standard
+  tests which are nothing more than packet replays.
+  The 
+  `fisb-decode <https://github.com/rand-projects/fisb-decode>`_
+  repository has programs that will essentially turn time back to
+  the starting packet time, and then wait in real time until
+  the next packet would have been sent, and send it at the
+  correct time relative to the original.
+  The second reason is that the FAA, probably dating from
+  the time reports were sent over low speed teletype circuits, uses
+  only partial dates in reports. It is rare to get the year, month,
+  day, and clock time, in a single message. Often, you have to use the
+  context of when the message was sent to guess at the actual date-time.
+  The 'fisb-decode' 
+  repository makes heavy use of message times to create JSON messages
+  that have a complete ISO-8601 timestamp.
+  
+  Another interesting thing about message times in FIS-B is that they
+  are only sent at specific times. There are 32 channels for sending FIS-B
+  messages.
+  Each channel has a specific time the message will begin to be transmitted
+  (see :ref:`FIS-B message start times <fisb-start-times>`).
+  Each second the messages for a specific ground station will
+  be sent in 2-4
+  different channels (depending on ground station strength),
+  but these channels can be predicted if you
+  know the correct UTC second. Even stranger is that the FIS-B standard
+  was designed such that if GPS goes out, you can use the time delay
+  from when a ground station sent a message,
+  to the time you received it, and calculate the distance from you to
+  the station (known as *pseudoranging*).
+  Combine this with distances from other stations and
+  you can calculate an approximate location. This concept is part of
+  an FAA initiative known as
+  *APNT (Alternate Positioning, Navigation, and Timing)*
+  [And yes, if you think this through, there are lots of problems
+  with UAT location finding, which is why you probably never heard of it].
 
 Failed FIS-B and ADS-B messages will look something like: ::
 
@@ -644,3 +706,109 @@ Then (assuming 'fisb-978' was cloned in your home directory): ::
 The html documentation will be found in ``fisb-978/docs/build/html``.
 Load ``index.html`` in your browser to view. Sphinx is configured to
 link directly to the source, so this is an easy way to explore the code.
+
+Reference Data
+==============
+
+.. _fisb-start-times:
+
+.. list-table:: FIS-B Message Start Times
+   :widths: 25 25 25
+   :header-rows: 1
+
+   * - Channel
+     - MSO
+     - Time in MS
+   * -  1
+     -  22
+     - 0.0060
+   * -  2
+     -  44
+     - 0.0115
+   * -  3
+     -  66
+     - 0.0170
+   * -  4
+     -  88
+     - 0.0225
+   * -  5
+     - 110
+     - 0.0280
+   * -  6
+     - 132
+     - 0.0335
+   * -  7
+     - 154
+     - 0.0390
+   * -  8
+     - 176
+     - 0.0445
+   * -  9
+     - 198
+     - 0.0500
+   * - 10
+     - 220
+     - 0.0555
+   * - 11
+     - 242
+     - 0.0610
+   * - 12
+     - 264
+     - 0.0665
+   * - 13
+     - 286
+     - 0.0720
+   * - 14
+     - 308
+     - 0.0775
+   * - 15
+     - 330
+     - 0.0830
+   * - 16
+     - 352
+     - 0.0885
+   * - 17
+     - 374
+     - 0.0940
+   * - 18
+     - 396
+     - 0.0995
+   * - 19
+     - 418
+     - 0.1050
+   * - 20
+     - 440
+     - 0.1105
+   * - 21
+     - 462
+     - 0.1160
+   * - 22
+     - 484
+     - 0.1215
+   * - 23
+     - 506
+     - 0.1270
+   * - 24
+     - 528
+     - 0.1325
+   * - 25
+     - 550
+     - 0.1380
+   * - 26
+     - 572
+     - 0.1435
+   * - 27
+     - 594
+     - 0.1490
+   * - 28
+     - 616
+     - 0.1545
+   * - 29
+     - 638
+     - 0.1600
+   * - 30
+     - 660
+     - 0.1655
+   * - 31
+     - 682
+     - 0.1710

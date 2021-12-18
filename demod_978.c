@@ -520,8 +520,8 @@ void write_packet(bool isFisb) {
     actual_usecs = time_usecs + usecs_after_sample;
 
     if (actual_usecs > 1000000) {
-      time_secs += actual_usecs / 1000000;
-      actual_usecs = actual_usecs % 1000000;
+      time_secs++;
+      actual_usecs = actual_usecs - 1000000;
     } else if (actual_usecs < 0) {
       time_secs--;
       actual_usecs = 1000000 + actual_usecs;
@@ -534,14 +534,18 @@ void write_packet(bool isFisb) {
     typeChar = 'A';
   }
   
-  // Write packet attributes to string
+  // Write packet attributes to string. Double check current_running_total
+  // is in bounds. If not, force it in bounds.
+  if (current_running_total >= 1000000000) {
+    current_running_total = 99999999;
+  }
   sprintf(attributes,"%lu.%06ld.%c.%08d.%d", time_secs,
       actual_usecs, typeChar, current_running_total, last_sync_errors);
 
   // double to check to make sure this is ATTRIBUTE_LEN
   if (strlen(attributes) != ATTRIBUTE_LEN) {
-    fprintf(stderr, "Got %ld for attribute length, not %d\n",
-        strlen(attributes), ATTRIBUTE_LEN);
+    fprintf(stderr, "Got %ld for attribute length, not %d. Attributes: '%s'\n",
+        strlen(attributes), ATTRIBUTE_LEN, attributes);
     exit(EXIT_FAILURE);
   }
 
