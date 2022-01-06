@@ -95,6 +95,19 @@ writingErrorFiles = False
 # Flag to show lowest usable signal levels. Set by --ll.
 show_lowest_levels = False
 
+# Flag to repair block zero fixed (not changing) bits.
+# Set by --bzfb flag.
+block_zero_fixed_bits = False
+
+# Set to True if replacing lat/long values. Set by --latlong.
+replace_lat_long = False
+
+# For --latlong flag, holds number of lat/longs to check.
+latLongArrayLen = 0
+
+# For --latlong flag, contains contents of lat/longs.
+latLongArray = None
+
 # Reed-Solomon error correction Ground Uplink parameters:
 #   Symbol Size: 8
 #   Message Symbols: 72 (ADS-B short: 144, ADS-B long: 272)
@@ -175,7 +188,7 @@ def block0ThoroughCheck(hexBlocks):
   # Didn't find anything
   return False, hexBlocks
 
-def packAndTest(rs, bits):
+def packAndTest(rs, bits, latLong = False):
   """
   Take a set of integers, each integer representing a
   single bit, and turn them into binary and pack them into
@@ -197,16 +210,28 @@ def packAndTest(rs, bits):
   """
   # Turn integers to 1/0 bits and pack in bytes.
   byts = np.packbits(np.where((bits > 0), 1, 0))
-  
-  # Do Reed-Solomon error correction.
-  errCorrected, errs = rs.decode(byts)
-  
-  if errs >= 0:
-    errCorrectedHex = errCorrected.tobytes().hex()
-  else:
-    errCorrectedHex = None
+  #ba = byts.tobytes()
+  if not latLong:
+    # Do Reed-Solomon error correction.
+    errCorrected, errs = rs.decode(byts)
 
-  return errCorrectedHex, errs
+    if errs >= 0:
+      errCorrectedHex = errCorrected.tobytes().hex()
+      return errCorrectedHex, errs      
+    else:
+      return None, errs
+  else:
+    for i in range(0, latLongArrayLen):
+      byts[0:6] = latLongArray[i][0:6]
+
+      # Do Reed-Solomon error correction.
+      errCorrected, errs = rs.decode(byts)
+  
+      if errs >= 0:
+        errCorrectedHex = errCorrected.tobytes().hex()
+        return errCorrectedHex, errs
+    
+    return None, -74
 
 def extractBlockBitsFisb(samples, offset, blockNumber):
   """
@@ -342,9 +367,23 @@ def shiftBits(bits, neighborBits, shiftAmount):
   # will either raise or lower the sample point.
   shiftedBits = (bits + (neighborBits * shiftAmount))/2
   
+  # This an alternative formula for shifted bits, works at the
+  # same speed and produces near identical results. Not sure
+  # which is the absolute best one to use.
+  #
+  # One test running against 110,000 errors, this formula resulted
+  # in 188 more decodes (5772 to 5564). Over about an 11 minute
+  # run, this method was only 5 seconds slower.
+  #
+  # In a regular run of normal packets, this formula gets the
+  # same to slightly lesser number of packets.
+  #
+  #shiftedBits = ((neighborBits - bits) * shiftAmount) + bits
+
   return shiftedBits
 
-def tryShiftBits(rs, bits, bitsBefore, bitsAfter, tryFirst):
+def tryShiftBits(rs, bits, bitsBefore, bitsAfter, tryFirst, \
+      latLong = False, block0FixedBits = False):
   """
   Given 3 packets of data (sample, before sample, and
   after sample), error correct the sample using various shifts.
@@ -378,9 +417,6 @@ def tryShiftBits(rs, bits, bitsBefore, bitsAfter, tryFirst):
     * Shift value that was successful, or -1 if not successful. Used as
       tryFirst on the next run.
   """
-  # Record the number of times we tried a shift.
-  numTries = 0
-
   if tryFirst != -1:
     if tryFirst == 0:
       shiftedBits = bits
@@ -389,11 +425,9 @@ def tryShiftBits(rs, bits, bitsBefore, bitsAfter, tryFirst):
     else:
       shiftedBits = shiftBits(bits, bitsAfter, -tryFirst)
 
-    numTries += 1
-
-    errCorrectedHex, errs = packAndTest(rs, shiftedBits)
+    errCorrectedHex, errs = packAndTest(rs, shiftedBits, latLong)
     if errs >= 0:
-      return True, errCorrectedHex, errs, numTries, tryFirst
+      return True, errCorrectedHex, errs, tryFirst
 
   # Try all shifts in ``SHIFT_BY_PROBABILITY`` list.
   for shift in SHIFT_BY_PROBABILITY:
@@ -407,14 +441,44 @@ def tryShiftBits(rs, bits, bitsBefore, bitsAfter, tryFirst):
       shiftedBits = shiftBits(bits, bitsBefore, shift)
     else:
       shiftedBits = shiftBits(bits, bitsAfter, -shift)
-
-    numTries += 1
-
-    errCorrectedHex, errs = packAndTest(rs, shiftedBits)
+  
+    if block0FixedBits:
+      # For block zero fixed bits, force any fixed bits to 
+      # an appropriate value. This will only be called for
+      # block zero.
+      # Note: This does not include 'position valid' in byte 6.
+      # This is always zero in reality, but standard states it
+      # should be one.
+      shiftedBits[48] = +10000   # UTC coupled
+      shiftedBits[49] = -10000   # Reserved
+      shiftedBits[50] = +10000   # App Data Valid
+      shiftedBits[60] = -10000   # Reserved
+      shiftedBits[61] = -10000   # Reserved
+      shiftedBits[62] = -10000   # Reserved
+      shiftedBits[63] = -10000   # Reserved
+      shiftedBits[73] = -10000   # Reserved  (UAT Frame byte 2)
+      shiftedBits[74] = -10000   # Reserved  (UAT Frame byte 2)
+      shiftedBits[75] = -10000   # Reserved  (UAT Frame byte 2)
+      
+    errCorrectedHex, errs = packAndTest(rs, shiftedBits, latLong)
     if errs >= 0:
-      return True, errCorrectedHex, errs, numTries, shift
+      return True, errCorrectedHex, errs, shift
 
-  return False, None, 99, -1, -1
+  return False, None, 98, -1
+
+def blockZeroTricks(block, bits, bitsBefore, bitsAfter, hexBlocks):
+  # Using this in a file of 110951 all cause errors resulted in
+  # this additional number of complete packet decodes:
+  #   lat/long fix only:    4908 (4.4%)
+  #   block zero fix only:   756 (0.7%)
+  #   combined:             5564 (5.0%)
+  status, errCorrectedHex, errs, _ = tryShiftBits(rsFisb, bits, bitsBefore, \
+        bitsAfter, -1, replace_lat_long, block_zero_fixed_bits)
+  if status:
+    hexBlocks[block] = errCorrectedHex
+    return True, hexBlocks, errs
+
+  return False, hexBlocks, 98
 
 def processAndRepairFisb(samples, offset, hexBlocks, hexErrs):
   """
@@ -453,7 +517,6 @@ def processAndRepairFisb(samples, offset, hexBlocks, hexErrs):
     * Updated version of ``hexErrs`` which will be a 6 item list
       with each element being number of errors found in the block
       (0-4) or ``99`` for a block that failed to error correct.
-    * Number of attempts at decode. -1 if failed.
   """
   # Create hexBlocks if first time call.
   if hexBlocks == None:
@@ -463,7 +526,6 @@ def processAndRepairFisb(samples, offset, hexBlocks, hexErrs):
   if hexErrs == None:
     hexErrs = [99, 99, 99, 99, 99, 99]
 
-  numTriesTotal = 0
   shiftThatWorked = -1
 
   # Loop and try to error correct each block
@@ -476,9 +538,7 @@ def processAndRepairFisb(samples, offset, hexBlocks, hexErrs):
       block)
     
     # Shift bits
-    status, errCorrectedHex, hexErrs[block], numTriesBlock, shift = tryShiftBits(rsFisb, bits, bitsBefore, bitsAfter, shiftThatWorked)
-
-    numTriesTotal += numTriesBlock
+    status, errCorrectedHex, hexErrs[block], shift = tryShiftBits(rsFisb, bits, bitsBefore, bitsAfter, shiftThatWorked)
 
     if status:
       # Start next block with the shift that worked.
@@ -493,24 +553,38 @@ def processAndRepairFisb(samples, offset, hexBlocks, hexErrs):
       if block == 0:
         foundEmptyFrame, hexBlocks = block0ThoroughCheck(hexBlocks)
         if foundEmptyFrame:
-          return True, hexBlocks, hexErrs, numTriesTotal
+          return True, hexBlocks, hexErrs
 
       continue
+
+    # Extra checks for block 0
+    if block == 0:
+      if replace_lat_long or block_zero_fixed_bits:
+        status, hexBlocks, hexErrs[block] = blockZeroTricks(block, bits, bitsBefore, bitsAfter, hexBlocks)
+        if status:
+          foundEmptyFrame, hexBlocks = block0ThoroughCheck(hexBlocks)
+          if foundEmptyFrame:
+            return True, hexBlocks, hexErrs
+          continue
     
     # There are still blocks with errors
 
-    # If we have a valid block zero, do a more thorough check of block zero
-    # looking for frames that end early with zeros.
-    status, hexBlocks = block0ThoroughCheck(hexBlocks)
-    if status:
-      return True, hexBlocks, hexErrs, numTriesTotal
-
+    # Nothing worked, abandon and try block0ThoroughCheck
+    # Don't process other blocks.
+    if (not status):
+      break
+    
   # If there are None values in hexBlocks, nothing worked.
   if None in hexBlocks:
-    return False, hexBlocks, hexErrs, -1
-
+    # Do final check for early ending packet.
+    status, hexBlocks = block0ThoroughCheck(hexBlocks)
+    if status:
+      return True, hexBlocks, hexErrs
+    
+    return False, hexBlocks, hexErrs
+  
   # Otherwise, all blocks were error corrected.
-  return True, hexBlocks, hexErrs, numTriesTotal
+  return True, hexBlocks, hexErrs
 
 def processAndRepairAdsb(samples, offset, isShort):
   """
@@ -546,12 +620,12 @@ def processAndRepairAdsb(samples, offset, isShort):
     offset, isShort)
   
   # Shift bits
-  status, hexBlock, errs, numTriesTotal, _ = tryShiftBits(rs, bits, bitsBefore, bitsAfter, -1)
+  status, hexBlock, errs, _ = tryShiftBits(rs, bits, bitsBefore, bitsAfter, -1)
 
   if status:
-    return True, hexBlock, errs, numTriesTotal
+    return True, hexBlock, errs
 
-  return False, None, 99, -1
+  return False, None, 98
 
 def hexErrsToStr(hexErrs):
   return f'{hexErrs[0]:02}:{hexErrs[1]:02}:{hexErrs[2]:02}:{hexErrs[3]:02}:{hexErrs[4]:02}:{hexErrs[5]:02}'
@@ -578,8 +652,8 @@ def hexBlocksToHexString(hexBlocks):
   return '+' + hexBlocks[0] + hexBlocks[1] + hexBlocks[2] + \
     hexBlocks[3] + hexBlocks[4] + hexBlocks[5]
 
-def hexBlocksFormatted(hexBlocks, signalStrengthStr, timeStr, hexErrs, \
-   syncErrors, numTries):
+def fisbHexBlocksFormatted(hexBlocks, signalStrengthStr, timeStr, hexErrs, \
+   syncErrors):
   """
   Takes error corrected FIS-B message and produces final output string.
 
@@ -595,8 +669,6 @@ def hexBlocksFormatted(hexBlocks, signalStrengthStr, timeStr, hexErrs, \
     hexErrs (list): 6 item list with each element being the number
       of Reed-Solomon errors in the block.
     syncErrors (int): Number of errors found in the sync word.
-    numTries (int): Number of attempts at decodes. 1 is the best number.
-      Higher numbers mean more shifts were needed.
 
   Returns:
     str: Final error corrected FIS-B string ready for display.
@@ -604,11 +676,11 @@ def hexBlocksFormatted(hexBlocks, signalStrengthStr, timeStr, hexErrs, \
   rsErrStr = hexErrsToStr(hexErrs)
 
   return hexBlocksToHexString(hexBlocks) + ';rs=' + str(syncErrors) + '/' + \
-    rsErrStr + '/' + f'{numTries:03}' + ';' + signalStrengthStr + \
+    rsErrStr + ';' + signalStrengthStr + \
     ';' + timeStr
 
-def hexBlockFormatted(hexBlock, signalStrengthStr, timeStr, errs, \
-    syncErrors, numTries):
+def adsbHexBlockFormatted(hexBlock, signalStrengthStr, timeStr, errs, \
+    syncErrors):
   """
   Takes error corrected ADS-B message and produces final output string.
 
@@ -622,13 +694,12 @@ def hexBlockFormatted(hexBlock, signalStrengthStr, timeStr, errs, \
     timeStr (str): Already created time string.
     errs (int): Number of Reed-Solomon errors detected.
     syncErrors (int): Number of errors found in the sync word.
-    numTries (int): Number of Reed-Solomon attempts before decoding.
 
   Returns:
     str: Final error corrected ADS-B string ready for display.
   """
   return '-' + hexBlock + ';rs=' + str(syncErrors) + '/' + str(errs) + \
-       '/' + f'{numTries:03};' + signalStrengthStr + ';' + timeStr
+       ';' + signalStrengthStr + ';' + timeStr
 
 def processFisbPacket(samples, timeStr, signalStrengthStr, syncErrors, \
     attrStr):
@@ -661,19 +732,19 @@ def processFisbPacket(samples, timeStr, signalStrengthStr, syncErrors, \
   offset = 1
 
   # Start with simple sample error correction. This works most of the time.
-  didErrCorrect, hexBlocks, hexErrs, numTries = processAndRepairFisb(samples, offset, None, None)
+  didErrCorrect, hexBlocks, hexErrs = processAndRepairFisb(samples, offset, None, None)
 
   if didErrCorrect:
-    return didErrCorrect, hexBlocksFormatted(hexBlocks, \
-      signalStrengthStr, timeStr, hexErrs, syncErrors, numTries)
+    return didErrCorrect, fisbHexBlocksFormatted(hexBlocks, \
+      signalStrengthStr, timeStr, hexErrs, syncErrors)
 
   # Try with added offset
-  didErrCorrect, hexBlocks, hexErrs, numTries = processAndRepairFisb(samples, offset + 1, hexBlocks, hexErrs)
+  didErrCorrect, hexBlocks, hexErrs = processAndRepairFisb(samples, offset + 1, hexBlocks, hexErrs)
 
   if didErrCorrect:
     # Return formatted string (add 500 to num tries if we needed an offset)
-    return didErrCorrect, hexBlocksFormatted(hexBlocks, signalStrengthStr, \
-      timeStr, hexErrs, syncErrors, numTries + 500)
+    return didErrCorrect, fisbHexBlocksFormatted(hexBlocks, signalStrengthStr, \
+      timeStr, hexErrs, syncErrors)
   
   # Did not error correct.
   hexErrsStr = hexErrsToStr(hexErrs)
@@ -729,25 +800,25 @@ def processAdsbPacket(samples, timeStr, signalStrengthStr, syncErrors, \
   # things most likely to work most of the time first.
 
   # normal 94.2%
-  didErrCorrect, hexBlock, errs, numTries = processAndRepairAdsb(samples, offset, isShort)
+  didErrCorrect, hexBlock, errs  = processAndRepairAdsb(samples, offset, isShort)
   if didErrCorrect:
-    return didErrCorrect, hexBlockFormatted(hexBlock, signalStrengthStr, timeStr, errs, syncErrors, numTries)
+    return didErrCorrect, adsbHexBlockFormatted(hexBlock, signalStrengthStr, timeStr, errs, syncErrors)
   
   # opposite (we thought is was a long, but it was a short, or visa versa)
   # 2.9%
-  didErrCorrect, hexBlock, errs, numTries = processAndRepairAdsb(samples, offset, not isShort)
+  didErrCorrect, hexBlock, errs = processAndRepairAdsb(samples, offset, not isShort)
   if didErrCorrect:
-    return didErrCorrect, hexBlockFormatted(hexBlock, signalStrengthStr, timeStr, errs, syncErrors, numTries)
+    return didErrCorrect, adsbHexBlockFormatted(hexBlock, signalStrengthStr, timeStr, errs, syncErrors)
   
   # opposite offset (switch long for short (or visa versa) and add offset) 2.3%
-  didErrCorrect, hexBlock, errs, numTries = processAndRepairAdsb(samples, offset + 1, not isShort)
+  didErrCorrect, hexBlock, errs = processAndRepairAdsb(samples, offset + 1, not isShort)
   if didErrCorrect:
-    return didErrCorrect, hexBlockFormatted(hexBlock, signalStrengthStr, timeStr, errs, syncErrors, numTries + 500)
+    return didErrCorrect, adsbHexBlockFormatted(hexBlock, signalStrengthStr, timeStr, errs, syncErrors)
 
   # offset (take our original data and increase the offset) 0.4%
-  didErrCorrect, hexBlock, errs, numTries = processAndRepairAdsb(samples, offset + 1, isShort)
+  didErrCorrect, hexBlock, errs = processAndRepairAdsb(samples, offset + 1, isShort)
   if didErrCorrect:
-    return didErrCorrect, hexBlockFormatted(hexBlock, signalStrengthStr, timeStr, errs, syncErrors, numTries + 500)
+    return didErrCorrect, adsbHexBlockFormatted(hexBlock, signalStrengthStr, timeStr, errs, syncErrors)
 
   # Did not error correct.
   if show_failed_adsb:
@@ -957,6 +1028,8 @@ are automatically set, and any '--se' argument is ignored."""
   parser.add_argument("--ff", help='Print failed FIS-B packet information as a comment.', action='store_true')
   parser.add_argument("--fa", help='Print failed ADS-B packet information as a comment.', action='store_true')
   parser.add_argument("--ll", help='Print lowest levels of FIS-B and ADS-B signal levels.', action='store_true')
+  parser.add_argument("--bzfb", help='Repair block 0 fixed bits.', action='store_true')
+  parser.add_argument("--latlong", required=False, help='Hex strings of first 6 bytes of block zero.')
   parser.add_argument("--se", required=False, help='Directory to save failed error corrections.')
   parser.add_argument("--re", required=False, help='Directory to reprocess errors.')
 
@@ -971,9 +1044,39 @@ are automatically set, and any '--se' argument is ignored."""
   if args.ll:
     show_lowest_levels = True
 
+  if args.bzfb:
+    block_zero_fixed_bits = True
+
   if args.se:
     dir_out_errors = args.se
     writingErrorFiles = True
+
+  # If using 1st 6 bytes of block zero. May have more than one lat/long
+  # separated by whitspace.
+  if args.latlong:
+    replace_lat_long = True
+
+    hexStrList = args.latlong.split()
+    
+    latLongArrayLen = len(hexStrList)
+    latLongArray = np.zeros((latLongArrayLen, 6), dtype=np.uint8)
+
+    for i, hexstr in enumerate(hexStrList):
+      # Catch non-hex values
+      try:
+        int(hexstr, 16)
+      except ValueError:
+        print('Illegal hex for --latlong', file=sys.stderr)
+        sys.exit(1)
+
+      # Length has to be 12
+      if (len(hexstr) != 12):
+        print('Hex string length must be 12', file=sys.stderr)
+        sys.exit(1)
+
+      # Convert hex to array.
+      for j in range(0, 6):
+        latLongArray[i][j] = int(hexstr[j*2:(j*2)+2], 16)
 
   # If reprocessing errors call mainReprocessErrors() else main()
   if args.re:
