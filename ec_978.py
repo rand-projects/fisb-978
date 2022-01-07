@@ -40,6 +40,7 @@ import pyreedsolomon as rs
 import argparse
 import glob
 import time
+from datetime import timezone, datetime, timedelta
 import shutil
 from argparse import RawTextHelpFormatter
 
@@ -57,6 +58,14 @@ SHIFT_BY_PROBABILITY = [0, -0.75, 0.75, -0.50, 0.50, -0.25, \
       0.25, -0.85, 0.40, 0.65, -0.30, 0.80, -.05, 0.05, -0.90, 0.90, -0.10, \
       0.10, 0.85, -0.15, 0.15, -0.80, -0.65, -0.35, 0.35, -0.70, 0.70, \
       0.30, -0.40, -0.60, 0.60, -0.20, 0.20, -0.45, 0.45, -0.55, 0.55]
+
+UPLINK_FEEDBACK_TABLE = [ '0', '1-13', '14-21', '22-25', '26-28', '29-30', \
+    '31', '32']
+
+BASE40_TABLE = ['0','1','2','3','4','5','6','7','8','9', \
+    'A','B','C','D','E','F','G','H','I','J','K','L','M', \
+    'N','O','P','Q','R','S','T','U','V','W','X','Y','Z', \
+    ' ','.','x','y']
 
 # Number of bits in a raw FIS-B data block (with RS bits)
 BITS_PER_BLOCK = 4416
@@ -87,6 +96,9 @@ show_failed_fisb = False
 
 # If True, show information about failed ADS-B packets as a comment.
 show_failed_adsb = False
+
+# If True, do an ADS-B partial decode. Turned on by --apd flag.
+adsb_partial_decode = False
 
 # Directory and flag for writing error files.
 dir_out_errors = None
@@ -444,7 +456,7 @@ def tryShiftBits(rs, bits, bitsBefore, bitsAfter, tryFirst, \
   
     if block0FixedBits:
       # For block zero fixed bits, force any fixed bits to 
-      # an appropriate value. This will only be called for
+      # the appropriate value. This will only be called for
       # block zero.
       # Note: This does not include 'position valid' in byte 6.
       # This is always zero in reality, but standard states it
@@ -676,8 +688,33 @@ def fisbHexBlocksFormatted(hexBlocks, signalStrengthStr, timeStr, hexErrs, \
   rsErrStr = hexErrsToStr(hexErrs)
 
   return hexBlocksToHexString(hexBlocks) + ';rs=' + str(syncErrors) + '/' + \
-    rsErrStr + ';' + signalStrengthStr + \
-    ';' + timeStr
+    rsErrStr + ';ss=' + signalStrengthStr + \
+    ';t=' + timeStr
+
+def decodeBase40(val):
+  if val == 0:
+    return [0,0,0]
+
+  ret = []
+  while val:
+    ret.append(int(val % 40))
+    val //= 40
+
+  while len(ret) < 3:
+    ret.append(0)  
+
+  return ret[::-1]
+
+def decodeCallSign(byts):
+  str = ''
+  for i in range(0,6,2):
+    val = (byts[i] << 8) | byts[i+1]
+    valDigits = decodeBase40(val)
+
+    for j in valDigits:
+      str += BASE40_TABLE[j]
+  
+  return str.rstrip()
 
 def adsbHexBlockFormatted(hexBlock, signalStrengthStr, timeStr, errs, \
     syncErrors):
@@ -698,8 +735,45 @@ def adsbHexBlockFormatted(hexBlock, signalStrengthStr, timeStr, errs, \
   Returns:
     str: Final error corrected ADS-B string ready for display.
   """
+  # If the --apd (ADS-B partial decode) flag is set, do a partial
+  # decode
+  decodeStr = ''
+  
+  if adsb_partial_decode:
+    adsbBytes = bytes.fromhex(hexBlock)
+    #print(hexBlock, len(adsbBytes))
+    payloadTypeCode = (adsbBytes[0] & 0xF8) >> 3
+    addrQualifier = (adsbBytes[0] & 0x07)
+    addr = hexBlock[2:8].upper()
+
+    decodeStr = f'/{payloadTypeCode:02d}.{addrQualifier}.{addr}'
+    callSign = ''
+    if payloadTypeCode in [1, 3]:
+      # Decode emitter category and call sign
+      callSign = decodeCallSign(adsbBytes[17:23])
+      decodeStr += f'.{callSign[0]}.{callSign[1:]}.'
+    else:
+      decodeStr += '...'
+
+    if addrQualifier in [0, 1, 4, 5]:
+      # Figure out the data channel for this UTC second
+      packetTime = datetime.fromtimestamp(float(timeStr))
+      secsPastMidnightMod32 = int((packetTime - packetTime.replace(hour=0, minute=0,\
+          second=0)).total_seconds()) % 32
+      dataChan = 32 - secsPastMidnightMod32 + 1
+      if dataChan == 33:
+        dataChan = 1
+      
+      # Display data channel and resultant value.
+      uplinkFeedback = (adsbBytes[16] & 0x07)
+      decodeStr += f'.U{dataChan:02d}:{UPLINK_FEEDBACK_TABLE[uplinkFeedback]}'
+    elif (addrQualifier in [2, 3]) and (payloadTypeCode >= 0) \
+        and (payloadTypeCode <= 10):
+      tisbSiteId = (adsbBytes[16] & 0x0F)
+      decodeStr += f'.T{tisbSiteId:02d}'
+
   return '-' + hexBlock + ';rs=' + str(syncErrors) + '/' + str(errs) + \
-       ';' + signalStrengthStr + ';' + timeStr
+       f'{decodeStr};ss=' + signalStrengthStr + ';t=' + timeStr
 
 def processFisbPacket(samples, timeStr, signalStrengthStr, syncErrors, \
     attrStr):
@@ -751,7 +825,7 @@ def processFisbPacket(samples, timeStr, signalStrengthStr, syncErrors, \
 
   if show_failed_fisb:
 
-    failStr = f'#FAILED-FIS-B {syncErrors}/{hexErrsStr} {signalStrengthStr} {timeStr} ' + \
+    failStr = f'#FAILED-FIS-B {syncErrors}/{hexErrsStr} ss={signalStrengthStr} t={timeStr} ' + \
         attrStr
 
     # Write to standard output.
@@ -823,7 +897,7 @@ def processAdsbPacket(samples, timeStr, signalStrengthStr, syncErrors, \
   # Did not error correct.
   if show_failed_adsb:
 
-    failStr = f'#FAILED-ADS-B {syncErrors}/{errs} {signalStrengthStr} {timeStr} ' + \
+    failStr = f'#FAILED-ADS-B {syncErrors}/{errs} ss={signalStrengthStr} t={timeStr} ' + \
       attrStr
 
     # Write to standard output.
@@ -869,9 +943,9 @@ def main():
 
       # Create time string and signal strength string from the
       # file components.
-      timeStr = 't=' + splitName[0] + '.' + splitName[1][0:3]
+      timeStr = splitName[0] + '.' + splitName[1][0:3]
       rawSignalStrength = round(int(splitName[3]) / 1000000.0, 2)
-      signalStrengthString = 'ss=' + str(rawSignalStrength)
+      signalStrengthString = str(rawSignalStrength)
             
       # Extract sync errors
       syncErrors = splitName[4]
@@ -972,8 +1046,8 @@ def mainReprocessErrors(errorDir):
 
     # Create time string and signal strength string from the
     # file components.
-    timeStr = 't=' + splitName[0] + '.' + splitName[1][0:3]
-    signalStrengthString = 'ss=' + str(round(int(splitName[3]) \
+    timeStr = splitName[0] + '.' + splitName[1][0:3]
+    signalStrengthString = str(round(int(splitName[3]) \
         / 1000000.0, 2))
       
     # Extract sync errors
@@ -1029,7 +1103,8 @@ are automatically set, and any '--se' argument is ignored."""
   parser.add_argument("--fa", help='Print failed ADS-B packet information as a comment.', action='store_true')
   parser.add_argument("--ll", help='Print lowest levels of FIS-B and ADS-B signal levels.', action='store_true')
   parser.add_argument("--bzfb", help='Repair block 0 fixed bits.', action='store_true')
-  parser.add_argument("--latlong", required=False, help='Hex strings of first 6 bytes of block zero.')
+  parser.add_argument("--apd", help='Do a partial decode of ADS-B messages.', action='store_true')
+  parser.add_argument("--llb", required=False, help='Hex strings of first 6 bytes of block zero.')
   parser.add_argument("--se", required=False, help='Directory to save failed error corrections.')
   parser.add_argument("--re", required=False, help='Directory to reprocess errors.')
 
@@ -1047,16 +1122,19 @@ are automatically set, and any '--se' argument is ignored."""
   if args.bzfb:
     block_zero_fixed_bits = True
 
+  if args.apd:
+    adsb_partial_decode = True
+
   if args.se:
     dir_out_errors = args.se
     writingErrorFiles = True
 
   # If using 1st 6 bytes of block zero. May have more than one lat/long
   # separated by whitspace.
-  if args.latlong:
+  if args.llb:
     replace_lat_long = True
 
-    hexStrList = args.latlong.split()
+    hexStrList = args.llb.split()
     
     latLongArrayLen = len(hexStrList)
     latLongArray = np.zeros((latLongArrayLen, 6), dtype=np.uint8)
