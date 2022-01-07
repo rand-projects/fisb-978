@@ -65,7 +65,7 @@ UPLINK_FEEDBACK_TABLE = [ '0', '1-13', '14-21', '22-25', '26-28', '29-30', \
 BASE40_TABLE = ['0','1','2','3','4','5','6','7','8','9', \
     'A','B','C','D','E','F','G','H','I','J','K','L','M', \
     'N','O','P','Q','R','S','T','U','V','W','X','Y','Z', \
-    ' ','.','x','y']
+    ' ','','x','y']
 
 # Number of bits in a raw FIS-B data block (with RS bits)
 BITS_PER_BLOCK = 4416
@@ -635,7 +635,18 @@ def processAndRepairAdsb(samples, offset, isShort):
   status, hexBlock, errs, _ = tryShiftBits(rs, bits, bitsBefore, bitsAfter, -1)
 
   if status:
-    return True, hexBlock, errs
+    # These don't always decode correctly. Make sure that short messages are 
+    # always payload type 0, and long messages are always payload types 1 to 6.
+    # Also make sure the length of the hex string matches the payload type.
+    hexBlockLen = len(hexBlock)
+    byte0 = bytes.fromhex(hexBlock[0:2])[0]
+    payloadTypeCode = (byte0 & 0xF8) >> 3
+
+    if (payloadTypeCode == 0) and (hexBlockLen == 36):
+      return True, hexBlock, errs
+    elif (payloadTypeCode > 0) and (payloadTypeCode < 7) \
+        and (hexBlockLen == 68):
+      return True, hexBlock, errs
 
   return False, None, 98
 
@@ -707,6 +718,7 @@ def decodeBase40(val):
 
 def decodeCallSign(byts):
   str = ''
+
   for i in range(0,6,2):
     val = (byts[i] << 8) | byts[i+1]
     valDigits = decodeBase40(val)
@@ -738,22 +750,23 @@ def adsbHexBlockFormatted(hexBlock, signalStrengthStr, timeStr, errs, \
   # If the --apd (ADS-B partial decode) flag is set, do a partial
   # decode
   decodeStr = ''
+  hexBlockLen = len(hexBlock)
   
   if adsb_partial_decode:
     adsbBytes = bytes.fromhex(hexBlock)
-    #print(hexBlock, len(adsbBytes))
     payloadTypeCode = (adsbBytes[0] & 0xF8) >> 3
     addrQualifier = (adsbBytes[0] & 0x07)
     addr = hexBlock[2:8].upper()
 
-    decodeStr = f'/{payloadTypeCode:02d}.{addrQualifier}.{addr}'
+    decodeStr = f'/{payloadTypeCode}.{addrQualifier}.{addr}'
     callSign = ''
+
     if payloadTypeCode in [1, 3]:
       # Decode emitter category and call sign
       callSign = decodeCallSign(adsbBytes[17:23])
-      decodeStr += f'.{callSign[0]}.{callSign[1:]}.'
+      decodeStr += f'/{callSign[0]}.{callSign[1:]}/'
     else:
-      decodeStr += '...'
+      decodeStr += '//'
 
     if addrQualifier in [0, 1, 4, 5]:
       # Figure out the data channel for this UTC second
@@ -766,11 +779,11 @@ def adsbHexBlockFormatted(hexBlock, signalStrengthStr, timeStr, errs, \
       
       # Display data channel and resultant value.
       uplinkFeedback = (adsbBytes[16] & 0x07)
-      decodeStr += f'.U{dataChan:02d}:{UPLINK_FEEDBACK_TABLE[uplinkFeedback]}'
+      decodeStr += f'U{dataChan:02d}:{UPLINK_FEEDBACK_TABLE[uplinkFeedback]}'
     elif (addrQualifier in [2, 3]) and (payloadTypeCode >= 0) \
         and (payloadTypeCode <= 10):
       tisbSiteId = (adsbBytes[16] & 0x0F)
-      decodeStr += f'.T{tisbSiteId:02d}'
+      decodeStr += f'T{tisbSiteId:02d}'
 
   return '-' + hexBlock + ';rs=' + str(syncErrors) + '/' + str(errs) + \
        f'{decodeStr};ss=' + signalStrengthStr + ';t=' + timeStr
