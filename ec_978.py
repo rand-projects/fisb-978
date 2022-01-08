@@ -111,6 +111,9 @@ show_lowest_levels = False
 # Set by --bzfb flag.
 block_zero_fixed_bits = False
 
+# Repair blocks that end in trailing zeros.
+fix_trailing_zeros = False
+
 # Set to True if replacing lat/long values. Set by --latlong.
 replace_lat_long = False
 
@@ -492,6 +495,77 @@ def blockZeroTricks(block, bits, bitsBefore, bitsAfter, hexBlocks):
 
   return False, hexBlocks, 98
 
+def computeAverage1(bits):
+  frontBits = bits[0:64]
+  parityBits = bits[576:736]
+  frontOnes = np.delete(frontBits, np.where(frontBits < 0))
+  parityOnes = np.delete(parityBits, np.where(parityBits < 0))
+  totalOnes = frontOnes.size + parityOnes.size
+  ave = (np.sum(frontOnes) + np.sum(parityOnes)) / totalOnes
+  return ave
+
+def computeAverage0(bits):
+  return (np.average(np.delete(bits, np.where(bits > 0))))
+
+def computePercentAboveAveOne(bits, aveOne, numBits, adjFactor):
+  aveOneAdj = aveOne * adjFactor
+
+  if numBits == 512:
+    bitsToUse = bits[64:576]
+  else:
+    bitsToUse = bits
+
+  aboveAveBits = np.sum(np.where(bitsToUse >= aveOneAdj, 1, 0))
+  ave = aboveAveBits / numBits
+  return ave
+
+def fixZeros(block):
+  # Out of 110951 errors, this repaired 15153 or 13.7%.
+  # Ran at 237/sec.
+  aveOne = computeAverage1(block)
+  aveZero = computeAverage0(block)
+
+  startValue = 576
+  foundAnyZeros = False
+
+  for i in range(576, 63, -128):
+    sample = block[i-128:i]
+    percentAboveAveOne = computePercentAboveAveOne(sample, aveOne, 128, 1.10)
+    if percentAboveAveOne > 0.02:
+      break
+    if i != 64:
+      startValue = i - 128
+    else:
+      i = 64
+
+    foundAnyZeros = True
+
+  # Try to get finer grain by going backwards and looking
+  # for 1st value above 60% of 'percentAboveAveOne'.
+  newStartValue = startValue
+  if startValue != 64:
+    threshold = aveOne * 0.87 # empirically dervived
+    for i in range(startValue - 1, startValue - 128, -1):
+      if block[i] > threshold:
+        newStartValue = i + 8
+
+        # align to nearest byte
+        rem = newStartValue % 8
+        if rem != 0:
+          newStartValue += 8 - rem
+
+        if newStartValue > startValue:
+          newStartValue = startValue
+        else:
+          foundAnyZeros = True
+
+        break
+
+  if foundAnyZeros:
+    block[newStartValue:576] = aveZero
+
+  return foundAnyZeros, block
+
 def processAndRepairFisb(samples, offset, hexBlocks, hexErrs):
   """
   Given a FIS-B raw message, attempt to error correct all blocks.
@@ -579,6 +653,17 @@ def processAndRepairFisb(samples, offset, hexBlocks, hexErrs):
             return True, hexBlocks, hexErrs
           continue
     
+    # Look for blocks with trailing zeros
+    if fix_trailing_zeros:
+      foundAnyZeros, bits = fixZeros(bits)
+      if foundAnyZeros:
+        status, hexBlocks[block], hexErrs[block], shift = tryShiftBits(rsFisb, bits, bitsBefore, bitsAfter, shiftThatWorked)
+        if status:
+          foundEmptyFrame, hexBlocks = block0ThoroughCheck(hexBlocks)
+          if foundEmptyFrame:
+            return True, hexBlocks, hexErrs
+          continue
+
     # There are still blocks with errors
 
     # Nothing worked, abandon and try block0ThoroughCheck
@@ -1117,6 +1202,7 @@ are automatically set, and any '--se' argument is ignored."""
   parser.add_argument("--ll", help='Print lowest levels of FIS-B and ADS-B signal levels.', action='store_true')
   parser.add_argument("--bzfb", help='Repair block 0 fixed bits.', action='store_true')
   parser.add_argument("--apd", help='Do a partial decode of ADS-B messages.', action='store_true')
+  parser.add_argument("--ftz", help='Fix trailing zeros.', action='store_true')
   parser.add_argument("--llb", required=False, help='Hex strings of first 6 bytes of block zero.')
   parser.add_argument("--se", required=False, help='Directory to save failed error corrections.')
   parser.add_argument("--re", required=False, help='Directory to reprocess errors.')
@@ -1134,6 +1220,9 @@ are automatically set, and any '--se' argument is ignored."""
 
   if args.bzfb:
     block_zero_fixed_bits = True
+
+  if args.ftz:
+    fix_trailing_zeros = True
 
   if args.apd:
     adsb_partial_decode = True
