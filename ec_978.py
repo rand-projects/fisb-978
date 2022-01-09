@@ -16,13 +16,13 @@ for FIS-B packets and ``PACKET_LENGTH_ADSB`` (3084) for ADS-B packets.
 
 Note that while there are two types of ADS-B packets, short and long, that
 the length is set for long packets. That allows for long and short packets
-to be error corrected (you can sort of, but not absolutely, distinguish between the
-two at the time they are sent).
+to be error corrected (you can sort of, but not absolutely, distinguish
+between the two at the time they are sent).
 
 After the packets are received, they are packed together into bytes 
-and error corrected using the reed-solomon parity bits. If the initial error correction
-is not successful, the bits before and after each bit are used in a
-set of weighted averages to come up with a new set of bits. These bits
+and error corrected using the reed-solomon parity bits. If the initial error
+correction is not successful, the bits before and after each bit are used
+in a set of weighted averages to come up with a new set of bits. These bits
 are then tried. The concept is that since we are sampling at the
 Nyquist frequency, the bits actually sample are usually not at optimum
 sampling points. By using their 'bit buddies' (neighbor bits) we can
@@ -55,12 +55,13 @@ from argparse import RawTextHelpFormatter
 # packets from contention. The process was then repeated. It was also found
 # that a granularity of less than 5% wasn't useful.
 SHIFT_BY_PROBABILITY = [0, -0.75, 0.75, -0.50, 0.50, -0.25, \
-      0.25, -0.85, 0.40, 0.65, -0.30, 0.80, -.05, 0.05, -0.90, 0.90, -0.10, \
-      0.10, 0.85, -0.15, 0.15, -0.80, -0.65, -0.35, 0.35, -0.70, 0.70, \
-      0.30, -0.40, -0.60, 0.60, -0.20, 0.20, -0.45, 0.45, -0.55, 0.55]
+      0.25, -0.85, 0.40, 0.65, -0.30, 0.80, -.05, 0.05, -0.90, 0.90, \
+      -0.10, 0.10, 0.85, -0.15, 0.15, -0.80, -0.65, -0.35, 0.35, \
+      -0.70, 0.70, 0.30, -0.40, -0.60, 0.60, -0.20, 0.20, -0.45, \
+      0.45, -0.55, 0.55]
 
-UPLINK_FEEDBACK_TABLE = [ '0', '1-13', '14-21', '22-25', '26-28', '29-30', \
-    '31', '32']
+UPLINK_FEEDBACK_TABLE = [ '0', '1-13', '14-21', '22-25', '26-28', \
+    '29-30', '31', '32']
 
 BASE40_TABLE = ['0','1','2','3','4','5','6','7','8','9', \
     'A','B','C','D','E','F','G','H','I','J','K','L','M', \
@@ -109,10 +110,10 @@ show_lowest_levels = False
 
 # Flag to repair block zero fixed (not changing) bits.
 # Set by --bzfb flag.
-block_zero_fixed_bits = False
+block_zero_fixed_bits = True
 
 # Repair blocks that end in trailing zeros.
-fix_trailing_zeros = False
+fix_trailing_zeros = True
 
 # Set to True if replacing lat/long values. Set by --latlong.
 replace_lat_long = False
@@ -144,8 +145,9 @@ def block0ThoroughCheck(hexBlocks):
   remaining blocks will be filled in.
 
   Args:
-    hexBlocks (list): List of 6 hex blocks, each containing a string of 
-      hex values if already error corrected, or ``None`` is not error corrected.
+    hexBlocks (list): List of 6 hex blocks, each containing a
+      string of hex values if already error corrected, or ``None``
+      is not error corrected.
       
   Returns:
     tuple: Tuple containing:
@@ -258,19 +260,20 @@ def extractBlockBitsFisb(samples, offset, blockNumber):
     samples (nparray): Demodulated samples (int32).
     offset (int): This is the offset into ``samples`` where we consider.
       the 'starting' bit to be. It is usually one, although if we don't 
-      error correct with 1, 2 will be used later. 1 gets the packet that we error corrected
-      the sync word to. 2 will get the packet as the set of bits following
-      the packet that we got the sync word for.
+      error correct with 1, 2 will be used later. 1 gets the packet that
+      we error corrected the sync word to. 2 will get the packet as the
+      set of bits following the packet that we got the sync word for.
     blockNumber (int): Block number we are decoding (0-5).
 
   Returns:
     tuple: Tuple containing:
 
-    * Array of integers (nparray i32) representing the actual error corrected packet.
-    * Array of integers (nparray i32) containing 1 bit before the first returned
-      result.
-    * Array of integers (nparray i32) containing 1 bit after the first returned
-      result.
+    * Array of integers (nparray i32) representing the actual error
+      corrected packet.
+    * Array of integers (nparray i32) containing 1 bit before the first
+      returned result.
+    * Array of integers (nparray i32) containing 1 bit after the first
+      returned result.
   """
   # Arrays where bits will be placed.
   bitsHolder = np.empty((92,8), dtype=np.int32)
@@ -520,8 +523,8 @@ def computePercentAboveAveOne(bits, aveOne, numBits, adjFactor):
   return ave
 
 def fixZeros(block):
-  # Out of 110951 errors, this repaired 15153 or 13.7%.
-  # Ran at 237/sec.
+  # Out of 110951 errors, this repaired 15156 or 13.7%.
+  # Ran at 228/sec.
   aveOne = computeAverage1(block)
   aveZero = computeAverage0(block)
 
@@ -544,7 +547,7 @@ def fixZeros(block):
   # for 1st value above 60% of 'percentAboveAveOne'.
   newStartValue = startValue
   if startValue != 64:
-    threshold = aveOne * 0.87 # empirically dervived
+    threshold = aveOne * 0.87 # empirically derived
     for i in range(startValue - 1, startValue - 128, -1):
       if block[i] > threshold:
         newStartValue = i + 8
@@ -581,10 +584,10 @@ def processAndRepairFisb(samples, offset, hexBlocks, hexErrs):
   Args:
     samples (nparray): Int 32 array of samples containing the bit
       before the actual sample and two bits after the normal sample.
-    offset (int): The normal value is 1, which uses the starting bit (``samples[1]``)
-      of the normal sample. Can also be 2, which looks at the set of bits
-      after the current sample (``samples[2]``). Using this can result in a small, but
-      significant increase, in error corrections.
+    offset (int): The normal value is 1, which uses the starting bit
+      (``samples[1]``) of the normal sample. Can also be 2, which looks at the set
+      of bits after the current sample (``samples[2]``). Using this can result in a
+      small, but significant increase, in error corrections.
     hexBlocks (list): 6 item list containing 1 hex string for each
       block, or ``None``. When first called with an offset of 1, set hexBlocks
       to a single ``None`` value.
@@ -624,7 +627,8 @@ def processAndRepairFisb(samples, offset, hexBlocks, hexErrs):
       block)
     
     # Shift bits
-    status, errCorrectedHex, hexErrs[block], shift = tryShiftBits(rsFisb, bits, bitsBefore, bitsAfter, shiftThatWorked)
+    status, errCorrectedHex, hexErrs[block], shift = tryShiftBits(rsFisb, \
+        bits, bitsBefore, bitsAfter, shiftThatWorked)
 
     if status:
       # Start next block with the shift that worked.
@@ -646,7 +650,8 @@ def processAndRepairFisb(samples, offset, hexBlocks, hexErrs):
     # Extra checks for block 0
     if block == 0:
       if replace_lat_long or block_zero_fixed_bits:
-        status, hexBlocks, hexErrs[block] = blockZeroTricks(block, bits, bitsBefore, bitsAfter, hexBlocks)
+        status, hexBlocks, hexErrs[block] = blockZeroTricks(block, bits, \
+            bitsBefore, bitsAfter, hexBlocks)
         if status:
           foundEmptyFrame, hexBlocks = block0ThoroughCheck(hexBlocks)
           if foundEmptyFrame:
@@ -657,7 +662,8 @@ def processAndRepairFisb(samples, offset, hexBlocks, hexErrs):
     if fix_trailing_zeros:
       foundAnyZeros, bits = fixZeros(bits)
       if foundAnyZeros:
-        status, hexBlocks[block], hexErrs[block], shift = tryShiftBits(rsFisb, bits, bitsBefore, bitsAfter, shiftThatWorked)
+        status, hexBlocks[block], hexErrs[block], shift = tryShiftBits(rsFisb, \
+          bits, bitsBefore, bitsAfter, shiftThatWorked)
         if status:
           foundEmptyFrame, hexBlocks = block0ThoroughCheck(hexBlocks)
           if foundEmptyFrame:
@@ -668,7 +674,7 @@ def processAndRepairFisb(samples, offset, hexBlocks, hexErrs):
 
     # Nothing worked, abandon and try block0ThoroughCheck
     # Don't process other blocks.
-    if (not status):
+    if not status:
       break
     
   # If there are None values in hexBlocks, nothing worked.
@@ -690,9 +696,9 @@ def processAndRepairAdsb(samples, offset, isShort):
   Args:
     samples (nparray): int32 array of samples containing the bit
       before the normal sample and two bits after the normal sample.
-    offset (int): The normal value is 1, which uses the starting bit (``samples[1]``)
-      of the normal sample. Can also be 2, which looks at the set of bits
-      after the current sample (``samples[2]``).
+    offset (int): The normal value is 1, which uses the starting bit
+      (``samples[1]``) of the normal sample. Can also be 2, which looks at the set
+      of bits after the current sample (``samples[2]``).
     isShort (bool): ``True`` if we are trying to match a short ADS-B
       packet, otherwise ``False``.
 
@@ -736,7 +742,8 @@ def processAndRepairAdsb(samples, offset, isShort):
   return False, None, 98
 
 def hexErrsToStr(hexErrs):
-  return f'{hexErrs[0]:02}:{hexErrs[1]:02}:{hexErrs[2]:02}:{hexErrs[3]:02}:{hexErrs[4]:02}:{hexErrs[5]:02}'
+  return f'{hexErrs[0]:02}:{hexErrs[1]:02}:{hexErrs[2]:02}:{hexErrs[3]:02}:' + \
+    f'{hexErrs[4]:02}:{hexErrs[5]:02}'
 
 def hexBlocksToHexString(hexBlocks):
   """
@@ -818,9 +825,9 @@ def adsbHexBlockFormatted(hexBlock, signalStrengthStr, timeStr, errs, \
   """
   Takes error corrected ADS-B message and produces final output string.
 
-  Will concatenate the error corrected hex block with the trailing error, signal strength
-  and time information. Should be called only for a successfully error corrected
-  ADS-B packet.
+  Will concatenate the error corrected hex block with the trailing error,
+  signal strength and time information. Should be called only for a successfully
+  error corrected ADS-B packet.
 
   Args:
     hexBlock (str): Error corrected ADS-B message as a hex string.
@@ -904,14 +911,16 @@ def processFisbPacket(samples, timeStr, signalStrengthStr, syncErrors, \
   offset = 1
 
   # Start with simple sample error correction. This works most of the time.
-  didErrCorrect, hexBlocks, hexErrs = processAndRepairFisb(samples, offset, None, None)
+  didErrCorrect, hexBlocks, hexErrs = processAndRepairFisb(samples, offset, None, \
+      None)
 
   if didErrCorrect:
     return didErrCorrect, fisbHexBlocksFormatted(hexBlocks, \
       signalStrengthStr, timeStr, hexErrs, syncErrors)
 
   # Try with added offset
-  didErrCorrect, hexBlocks, hexErrs = processAndRepairFisb(samples, offset + 1, hexBlocks, hexErrs)
+  didErrCorrect, hexBlocks, hexErrs = processAndRepairFisb(samples, offset + 1, \
+      hexBlocks, hexErrs)
 
   if didErrCorrect:
     # Return formatted string (add 500 to num tries if we needed an offset)
@@ -923,8 +932,8 @@ def processFisbPacket(samples, timeStr, signalStrengthStr, syncErrors, \
 
   if show_failed_fisb:
 
-    failStr = f'#FAILED-FIS-B {syncErrors}/{hexErrsStr} ss={signalStrengthStr} t={timeStr} ' + \
-        attrStr
+    failStr = f'#FAILED-FIS-B {syncErrors}/{hexErrsStr} ss={signalStrengthStr}' + \
+      f' t={timeStr} {attrStr}'
 
     # Write to standard output.
     print(failStr, flush=True)
@@ -974,34 +983,39 @@ def processAdsbPacket(samples, timeStr, signalStrengthStr, syncErrors, \
   # normal 94.2%
   didErrCorrect, hexBlock, errs  = processAndRepairAdsb(samples, offset, isShort)
   if didErrCorrect:
-    return didErrCorrect, adsbHexBlockFormatted(hexBlock, signalStrengthStr, timeStr, errs, syncErrors)
+    return didErrCorrect, adsbHexBlockFormatted(hexBlock, signalStrengthStr, \
+        timeStr, errs, syncErrors), isShort
   
   # opposite (we thought is was a long, but it was a short, or visa versa)
   # 2.9%
   didErrCorrect, hexBlock, errs = processAndRepairAdsb(samples, offset, not isShort)
   if didErrCorrect:
-    return didErrCorrect, adsbHexBlockFormatted(hexBlock, signalStrengthStr, timeStr, errs, syncErrors)
+    return didErrCorrect, adsbHexBlockFormatted(hexBlock, signalStrengthStr, \
+        timeStr, errs, syncErrors), isShort
   
   # opposite offset (switch long for short (or visa versa) and add offset) 2.3%
-  didErrCorrect, hexBlock, errs = processAndRepairAdsb(samples, offset + 1, not isShort)
+  didErrCorrect, hexBlock, errs = processAndRepairAdsb(samples, offset + 1, \
+      not isShort)
   if didErrCorrect:
-    return didErrCorrect, adsbHexBlockFormatted(hexBlock, signalStrengthStr, timeStr, errs, syncErrors)
+    return didErrCorrect, adsbHexBlockFormatted(hexBlock, signalStrengthStr, \
+        timeStr, errs, syncErrors), isShort
 
   # offset (take our original data and increase the offset) 0.4%
   didErrCorrect, hexBlock, errs = processAndRepairAdsb(samples, offset + 1, isShort)
   if didErrCorrect:
-    return didErrCorrect, adsbHexBlockFormatted(hexBlock, signalStrengthStr, timeStr, errs, syncErrors)
+    return didErrCorrect, adsbHexBlockFormatted(hexBlock, signalStrengthStr, \
+        timeStr, errs, syncErrors), isShort
 
   # Did not error correct.
   if show_failed_adsb:
 
-    failStr = f'#FAILED-ADS-B {syncErrors}/{errs} ss={signalStrengthStr} t={timeStr} ' + \
-      attrStr
+    failStr = f'#FAILED-ADS-B {syncErrors}/{errs} ss={signalStrengthStr}' + \
+      f' t={timeStr} {attrStr}'
 
     # Write to standard output.
     print(failStr, flush=True)
 
-  return False, None
+  return False, None, isShort
 
 def main():
   """
@@ -1066,7 +1080,7 @@ def main():
         didErrCorrect, resultStr = processFisbPacket(packet, timeStr, \
           signalStrengthString, syncErrors, attrStr)
       else:
-        didErrCorrect, resultStr = processAdsbPacket(packet, timeStr, \
+        didErrCorrect, resultStr, isShort = processAdsbPacket(packet, timeStr, \
           signalStrengthString, syncErrors, attrStr)
 
       if didErrCorrect:
@@ -1076,16 +1090,19 @@ def main():
           if isFisbPacket:
             if rawSignalStrength < lowest_fisb_level:
               lowest_fisb_level = rawSignalStrength
-              print(f'lowest FIS-B     signal: {lowest_fisb_level}', flush=True, file=sys.stderr)
+              print(f'lowest FIS-B     signal: {lowest_fisb_level}', \
+                  flush=True, file=sys.stderr)
           else:
-            if len(resultStr) < 90:
+            if isShort:
               if rawSignalStrength < lowest_adsbs_level:
                 lowest_adsbs_level = rawSignalStrength
-                print(f'lowest ADS-B (S) signal: {lowest_adsbs_level}', flush=True, file=sys.stderr)
+                print(f'lowest ADS-B (S) signal: {lowest_adsbs_level}', \
+                    flush=True, file=sys.stderr)
             else:
               if rawSignalStrength < lowest_adsbl_level:
                 lowest_adsbl_level = rawSignalStrength
-                print(f'lowest ADS-B (L) signal: {lowest_adsbl_level}', flush=True, file=sys.stderr)
+                print(f'lowest ADS-B (L) signal: {lowest_adsbl_level}', \
+                    flush=True, file=sys.stderr)
 
         # Write to standard output.
         print(resultStr, flush=True)
@@ -1170,7 +1187,7 @@ def mainReprocessErrors(errorDir):
       didErrCorrect, resultStr = processFisbPacket(packet, timeStr, \
         signalStrengthString, syncErrors, attrStr)
     else:
-      didErrCorrect, resultStr = processAdsbPacket(packet, timeStr, \
+      didErrCorrect, resultStr, _ = processAdsbPacket(packet, timeStr, \
         signalStrengthString, syncErrors, attrStr)
 
     if didErrCorrect:
@@ -1185,7 +1202,8 @@ if __name__ == "__main__":
 
 Accepts FIS-B and ADS-B data supplied by 'demod_978' and send any output to
 standard output. By default will not produce any error messages for
-bad packets.
+bad packets. To show errored packets use '--ff' for FIS-B and '--fa' for
+ADS-B.
 
 The '--se' argument requires a directory where errors will be stored.
 This directory should be used by the '--re' argument in a future run to reprocess
@@ -1193,19 +1211,35 @@ the errors. When the '--se' argument is given, you need to supply either '--fa',
 '--ff' or both to indicate the type of error(s) you wish to save.
 
 When errors are reprocessed with '--re', the '--ff' and '--fa' arguments
-are automatically set, and any '--se' argument is ignored."""
+are automatically set, and any '--se' argument is ignored.
+
+Normal operation is to attempt to correct known bad FIS-B packets. You can turn this
+off. '--nobzfb' will turn off 'block zero fixed bits'. These are bits in FIS-B
+block zero that have known fixed values (always 1 or always 0). '--noftz' will
+prevent the recognition of a block with trailing zeros (a string of zeros at the
+end)."""
   parser = argparse.ArgumentParser(description= hlpText, \
           formatter_class=RawTextHelpFormatter)
           
-  parser.add_argument("--ff", help='Print failed FIS-B packet information as a comment.', action='store_true')
-  parser.add_argument("--fa", help='Print failed ADS-B packet information as a comment.', action='store_true')
-  parser.add_argument("--ll", help='Print lowest levels of FIS-B and ADS-B signal levels.', action='store_true')
-  parser.add_argument("--bzfb", help='Repair block 0 fixed bits.', action='store_true')
-  parser.add_argument("--apd", help='Do a partial decode of ADS-B messages.', action='store_true')
-  parser.add_argument("--ftz", help='Fix trailing zeros.', action='store_true')
-  parser.add_argument("--llb", required=False, help='Hex strings of first 6 bytes of block zero.')
-  parser.add_argument("--se", required=False, help='Directory to save failed error corrections.')
-  parser.add_argument("--re", required=False, help='Directory to reprocess errors.')
+  parser.add_argument("--ff", \
+    help='Print failed FIS-B packet information as a comment.', action='store_true')
+  parser.add_argument("--fa", \
+    help='Print failed ADS-B packet information as a comment.', action='store_true')
+  parser.add_argument("--ll", \
+    help='Print lowest levels of FIS-B and ADS-B signal levels.', \
+    action='store_true')
+  parser.add_argument("--nobzfb", \
+    help="Don't repair block zero fixed bits.", action='store_true')
+  parser.add_argument("--noftz", \
+    help="Don't fix trailing zeros.", action='store_true')
+  parser.add_argument("--apd", \
+    help='Do a partial decode of ADS-B messages.', action='store_true')
+  parser.add_argument("--llb", required=False, \
+    help='Hex strings of first 6 bytes of block zero.')
+  parser.add_argument("--se", required=False, \
+    help='Directory to save failed error corrections.')
+  parser.add_argument("--re", required=False, \
+    help='Directory to reprocess errors.')
 
   args = parser.parse_args()
 
@@ -1218,11 +1252,11 @@ are automatically set, and any '--se' argument is ignored."""
   if args.ll:
     show_lowest_levels = True
 
-  if args.bzfb:
-    block_zero_fixed_bits = True
+  if args.nobzfb:
+    block_zero_fixed_bits = False
 
-  if args.ftz:
-    fix_trailing_zeros = True
+  if args.noftz:
+    fix_trailing_zeros = False
 
   if args.apd:
     adsb_partial_decode = True
