@@ -24,10 +24,14 @@ and error corrected using the reed-solomon parity bits. If the initial error
 correction is not successful, the bits before and after each bit are used
 in a set of weighted averages to come up with a new set of bits. These bits
 are then tried. The concept is that since we are sampling at the
-Nyquist frequency, the bits actually sample are usually not at optimum
+Nyquist frequency, the bits actually sampled are usually not at optimum
 sampling points. By using their 'bit buddies' (neighbor bits) we can
 come up with more optimum sampling points. Empirically, this is
 very effective.
+
+If FIS-B packets are not correctly decoded using the above method, other methods
+such as supplying known fixed bits in block 0, or detecting runs of zeroes
+at the ends of blocks are tried.
 
 Successful corrections are passed to standard output.
 """
@@ -60,9 +64,21 @@ SHIFT_BY_PROBABILITY = [0, -0.75, 0.75, -0.50, 0.50, -0.25, \
       -0.70, 0.70, 0.30, -0.40, -0.60, 0.60, -0.20, 0.20, -0.45, \
       0.45, -0.55, 0.55]
 
+# Table that maps the uplink feedback code to the number of packets
+# received by a particular channel in the last 32 seconds. These are
+# the number of FIS-B packets received by an aircraft over a 
+# particular channel. The channel is rotated every second.
 UPLINK_FEEDBACK_TABLE = [ '0', '1-13', '14-21', '22-25', '26-28', \
     '29-30', '31', '32']
 
+# Maps UAT data channel to the power of the station and TIS-B site id.
+FISB_DATA_CHANNEL = [ \
+    'H15','H14','H13','M12','M11','M10','L8','L5|S3', \
+    'H15','H14','H13','M12','M11','L9','L7','L6|S2', \
+    'H15','H14','H13','M12','M10','L9','L7','L6|S1', \
+    'H15','H14','H13','M11','M10','L8', 'L6','S4']
+
+# Base 40 table for decoding the call signs of ADS-B packets.
 BASE40_TABLE = ['0','1','2','3','4','5','6','7','8','9', \
     'A','B','C','D','E','F','G','H','I','J','K','L','M', \
     'N','O','P','Q','R','S','T','U','V','W','X','Y','Z', \
@@ -217,6 +233,8 @@ def packAndTest(rs, bits, latLong = False):
       ADS-B short, and ADS-B long.
     bits (nparray): int32 array containing one integer per bit
       for the one FIS-B block or an entire ADS-B message.
+    latLong (bool): True if we are forcing the first 6 bytes
+      of FIS-B block 0 to be a predetermined value. Otherwise False.
 
   Returns:
     tuple: Tuple containing:
@@ -227,7 +245,7 @@ def packAndTest(rs, bits, latLong = False):
   """
   # Turn integers to 1/0 bits and pack in bytes.
   byts = np.packbits(np.where((bits > 0), 1, 0))
-  #ba = byts.tobytes()
+
   if not latLong:
     # Do Reed-Solomon error correction.
     errCorrected, errs = rs.decode(byts)
@@ -238,6 +256,7 @@ def packAndTest(rs, bits, latLong = False):
     else:
       return None, errs
   else:
+    # Try forced value for each entry in list.
     for i in range(0, latLongArrayLen):
       byts[0:6] = latLongArray[i][0:6]
 
@@ -364,9 +383,10 @@ def shiftBits(bits, neighborBits, shiftAmount):
   Shift amounts are found in ``SHIFT_BY_PROBABILITY`` and
   are ordered by what shift values will produce the quickest
   error corrections (using lots of empirical samples). The first shift 
-  is always 0, since this is most likely to match.
+  is always 0, since this is most likely to match. Well over 99%
+  of all matches will match within two tries.
 
-  You can also get a good first approximation by determing
+  You can also get a good first approximation by determining
   zero-crossing values, but using the shift table is
   essentially just as fast.
 
@@ -417,11 +437,17 @@ def tryShiftBits(rs, bits, bitsBefore, bitsAfter, tryFirst, \
     bits (nparray): Integers representing the current packet.
     bitsBefore (nparray): Integers representing the bits
       before the current packet.
-    bits (nparray): Integers representing the bits
+    bitsAfter (nparray): Integers representing the bits
       after the current packet.
     tryFirst (int): Try this shift first. Is ignored if this -1.
       This is used for FIS-B packets to set the shift to one
       that worked for a previous shift.
+    latLong (bool): True if we are to replace the first 6 bytes of a block
+      0 packet with a set of fixed values. If this is True, it is assumed that
+      ``bits`` is from a block 0 packet.
+    block0FixedBits (bool): True if we are to force a set of constant bits
+      for block zero. If True, it is assumed that ``bits`` are from a block
+      0 packet.
 
   Returns:
     tuple: Tuple containing:
@@ -429,12 +455,12 @@ def tryShiftBits(rs, bits, bitsBefore, bitsAfter, tryFirst, \
     * ``True`` if there was a successful error correction, else ``False``.
     * String of hex if the error correction was successful, else ``None``.
     * Number of errors found. Will be 4 or less for successfull
-      error correction or 99 for a failed correction.
-    * Number of shifts that were tried before a successful decode. 1 means
-      we decoded on the first try. -1 sent if the decode was not a success.
+      error correction or 98 for a failed correction.
     * Shift value that was successful, or -1 if not successful. Used as
       tryFirst on the next run.
   """
+  # If a previous packet was decoded with a shift, use that shift as the
+  # first attempt. It will almost always be successful.
   if tryFirst != -1:
     if tryFirst == 0:
       shiftedBits = bits
@@ -464,8 +490,8 @@ def tryShiftBits(rs, bits, bitsBefore, bitsAfter, tryFirst, \
       # For block zero fixed bits, force any fixed bits to 
       # the appropriate value. This will only be called for
       # block zero.
-      # Note: This does not include 'position valid' in byte 6.
-      # This is always zero in reality, but standard states it
+      # Note: This does not include 'position valid' in byte 6
+      # (bit 47). This is always zero in reality, but standard states it
       # should be one.
       shiftedBits[48] = +10000   # UTC coupled
       shiftedBits[49] = -10000   # Reserved
@@ -484,7 +510,43 @@ def tryShiftBits(rs, bits, bitsBefore, bitsAfter, tryFirst, \
 
   return False, None, 98, -1
 
-def blockZeroTricks(block, bits, bitsBefore, bitsAfter, hexBlocks):
+def blockZeroTricks(bits, bitsBefore, bitsAfter, hexBlocks):
+  """
+  For a block zero packet, this will apply the techniques of forcing the
+  first 6 bytes to be a particular value, and/or set a number of bits
+  to values that will always be true.
+
+  The first 6 bytes of block zero contain the latitude and longitude of the
+  ground station. With the receiver at a fixed location, only one or two values
+  will ever be received. These can be forced into ``bits``. This is set with
+  the ``--llb`` flag.
+
+  Block 0 fixed bits are a set of bits always set (either 1 or 0) in block one.
+  This option is normally on, but can be turned off with the ``--nobzfb`` flag.
+
+  Note that this routine is normally called after a normal decode of a packet is
+  tried.
+
+  Args:
+    bits (nparray): Integers representing the current packet.
+    bitsBefore (nparray): Integers representing the bits
+      before the current packet.
+    bitsAfter (nparray): Integers representing the bits
+      after the current packet.
+    hexBlocks (list): 6 item list containing 1 hex string for each
+      block, or ``None``. When first called with an offset of 1, set hexBlocks
+      to a single ``None`` value.
+    
+  Returns:
+    tuple: Tuple containing:
+
+    * ``True`` if there was a successful error correction, else ``False``.
+    * Array of ``hexblocks`` that was passed into the routine. It will be 
+      unchanged of the decode was not a success, otherwise ``hexblocks[0]``
+      will contain the hex characters for block 0.
+    * Number of errors found. Will be 4 or less for successfull
+      error correction or 98 for a failed correction.
+  """
   # Using this in a file of 110951 all cause errors resulted in
   # this additional number of complete packet decodes:
   #   lat/long fix only:    4908 (4.4%)
@@ -493,21 +555,49 @@ def blockZeroTricks(block, bits, bitsBefore, bitsAfter, hexBlocks):
   status, errCorrectedHex, errs, _ = tryShiftBits(rsFisb, bits, bitsBefore, \
         bitsAfter, -1, replace_lat_long, block_zero_fixed_bits)
   if status:
-    hexBlocks[block] = errCorrectedHex
+    hexBlocks[0] = errCorrectedHex
     return True, hexBlocks, errs
 
   return False, hexBlocks, 98
 
 def computeAverage1(bits):
+  """
+  Given a set of bits representing a single FIS-B block, compute the average of all
+  one values from the first 8 bytes and the last 20 bytes. Used as part of the
+  process for finding runs of zero values.
+
+  Args:
+    bits (nparray): Numpy array of bits to check.
+
+  Returns:
+    float: Calculated average one value of the first 8 bytes and last 20 bytes.
+  """
+  # Isolate first 8 bytes and last 20 bytes.
   frontBits = bits[0:64]
   parityBits = bits[576:736]
+
+  # Remove all values below zero
   frontOnes = np.delete(frontBits, np.where(frontBits < 0))
   parityOnes = np.delete(parityBits, np.where(parityBits < 0))
+  
+  # Calculate total number of samples.
   totalOnes = frontOnes.size + parityOnes.size
+  
+  # Sum the values of all the ones and divide by the number of samples to
+  # get the average.
   ave = (np.sum(frontOnes) + np.sum(parityOnes)) / totalOnes
   return ave
 
 def computeAverage0(bits):
+  """
+  Given a set of bits, compute the average of all the values below zero.
+
+  Args:
+    bits (nparray): Numpy array of bits to check.
+
+  Returns:
+    float: Calculated average zero value.
+  """
   return (np.average(np.delete(bits, np.where(bits > 0))))
 
 def computePercentAboveAveOne(bits, aveOne, numBits, adjFactor):
@@ -523,14 +613,54 @@ def computePercentAboveAveOne(bits, aveOne, numBits, adjFactor):
   return ave
 
 def fixZeros(block):
+  """
+  Given a FIS-B block, inspect the block and try to find a set of trailing zeros
+  at the end of the block. If found, set the value of the zeros to the average
+  zero for the entire block.
+
+  We first compute the average one value of the first 8 bytes of the block
+  and the last 20 bytes of the block (parity bits). These bits will have a 
+  number of one bits.
+
+  Then we divide the block into 4 equal parts. Starting from the back of the block,
+  we check the percentage of bits in the block that is greater than 110% of the
+  average value. If the percentage is > 2%, we assume the block is not a block
+  of zeros.
+
+  If it is a block of zeros, we continue backwards looking at each quarter section
+  and computing if it is a block of zeros or not.
+
+  As a last step, we take the last section that we think doesn't have zeros and
+  again starting at the end of the section go back bit by bit until we find a
+  bit that is greater than 87% of the average one value. When we find such a bit,
+  we move at least 8 bits and then potentially more bits to align to a byte
+  boundary.
+
+  At this point we will have a starting point where the block has zeros and set
+  those bits to the average zero value for the entire packet.
+
+  All of the somewhat arbitrary appearing numbers (110%, 87%, 2%) were obtained
+  empirically using a large set of error packets.
+
+  Args:
+    block (nparray): Set of bits representing a single FIS-B block.
+
+  Returns:
+    tuple: Tuple containing:
+
+    * ``True`` if we found a run of zeros and set them to a single value.
+      Else ``False``.
+    * Modified version of the ``block`` argument we were called with. Will have
+      the zero run set to the average zero value of the block.
+  """
   # Out of 110951 errors, this repaired 15156 or 13.7%.
   # Ran at 228/sec.
   aveOne = computeAverage1(block)
-  aveZero = computeAverage0(block)
 
   startValue = 576
   foundAnyZeros = False
 
+  # Dived the block into 128 bit 'quarters', starting from the back.
   for i in range(576, 63, -128):
     sample = block[i-128:i]
     percentAboveAveOne = computePercentAboveAveOne(sample, aveOne, 128, 1.10)
@@ -564,8 +694,9 @@ def fixZeros(block):
 
         break
 
+  # We have zeros in the block, so set them to the average zero in the block.
   if foundAnyZeros:
-    block[newStartValue:576] = aveZero
+    block[newStartValue:576] = computeAverage0(block)
 
   return foundAnyZeros, block
 
@@ -605,7 +736,8 @@ def processAndRepairFisb(samples, offset, hexBlocks, hexErrs):
       hex string with the error corrected value.
     * Updated version of ``hexErrs`` which will be a 6 item list
       with each element being number of errors found in the block
-      (0-4) or ``99`` for a block that failed to error correct.
+      (0-4) or ``98`` for a block that failed to error correct and ``99`` if
+      the block was not checked for errors.
   """
   # Create hexBlocks if first time call.
   if hexBlocks == None:
@@ -650,7 +782,7 @@ def processAndRepairFisb(samples, offset, hexBlocks, hexErrs):
     # Extra checks for block 0
     if block == 0:
       if replace_lat_long or block_zero_fixed_bits:
-        status, hexBlocks, hexErrs[block] = blockZeroTricks(block, bits, \
+        status, hexBlocks, hexErrs[block] = blockZeroTricks(bits, \
             bitsBefore, bitsAfter, hexBlocks)
         if status:
           foundEmptyFrame, hexBlocks = block0ThoroughCheck(hexBlocks)
@@ -709,8 +841,6 @@ def processAndRepairAdsb(samples, offset, isShort):
     * Hex string representing the error corrected message.
     * Number of errors found in the message ((0-4) or ``99`` for a
       message that failed to error correct.
-    * Number of times Reed-Solomon decoding was tried on this packet.
-      -1 if the packet did not decode.
   """
   # Short and long ADS-B use different Reed-Solomon instances.
   if isShort:
@@ -741,11 +871,24 @@ def processAndRepairAdsb(samples, offset, isShort):
 
   return False, None, 98
 
-def hexErrsToStr(hexErrs):
+def fisbHexErrsToStr(hexErrs):
+  """
+  Given an list containing error entries for each FIS-B block, return a
+  string representing the errors. This will appear as a comment in either
+  the result string or the failed error message.
+
+  Args:
+    hexErrs (list): List of 6 items, one for each FIS-B block. Each entry
+      will be the number of errors in the message, or 98 for a packet
+      that failed, and 99 for a packet that wasn't tried.
+
+  Returns:
+    string: String containing display string for error messages.
+  """
   return f'{hexErrs[0]:02}:{hexErrs[1]:02}:{hexErrs[2]:02}:{hexErrs[3]:02}:' + \
     f'{hexErrs[4]:02}:{hexErrs[5]:02}'
 
-def hexBlocksToHexString(hexBlocks):
+def fisbHexBlocksToHexString(hexBlocks):
   """
   Given a list of 6 items, each containing a hex-string of
   a error corrected block, return a string with all 6 hex strings
@@ -788,13 +931,27 @@ def fisbHexBlocksFormatted(hexBlocks, signalStrengthStr, timeStr, hexErrs, \
   Returns:
     str: Final error corrected FIS-B string ready for display.
   """
-  rsErrStr = hexErrsToStr(hexErrs)
+  rsErrStr = fisbHexErrsToStr(hexErrs)
 
-  return hexBlocksToHexString(hexBlocks) + ';rs=' + str(syncErrors) + '/' + \
+  return fisbHexBlocksToHexString(hexBlocks) + ';rs=' + str(syncErrors) + '/' + \
     rsErrStr + ';ss=' + signalStrengthStr + \
     ';t=' + timeStr
 
 def decodeBase40(val):
+  """
+  Given a value representing a base-40 number, return a list of three items
+  containing the decoded base-40 number. Each ``val`` holds 3 base-40
+  characters.
+
+  Used for decoding call signs.
+
+  Args:
+    val (int): Integer golding 3 base-40 characters.
+
+  Returns:
+    list: List of 3 items, each containing the numeric value of a base-40
+      number.
+  """
   if val == 0:
     return [0,0,0]
 
@@ -809,6 +966,19 @@ def decodeBase40(val):
   return ret[::-1]
 
 def decodeCallSign(byts):
+  """
+  Given a list of 6 bytes, each pair of bytes containing a base-40 number with 3
+  characters, return a string representing a call sign. Result will have any
+  trailing spaces stripped.
+
+  Args:
+    byts (list): List of 6 bytes. Each pair represents a base-40 number with 3
+      characters.
+
+  List:
+    string: String with up to 9 characters, but any trailing whitespace is
+      removed.
+  """
   str = ''
 
   for i in range(0,6,2):
@@ -819,6 +989,112 @@ def decodeCallSign(byts):
       str += BASE40_TABLE[j]
   
   return str.rstrip()
+
+def miniAdsbDecode(hexBlock, timeStr):
+  """
+  Creates a tiny decode of a small portion of the ADS-B message which can 
+  be printed with the hex decode of the packet in the comment section.
+
+  Example comments are: ::
+
+    1.2.A79B5F/1.N59DF/8500/G
+    0.0.A38101//2275/A
+    1.0.A38101/1.1200/2325/A23:32:L7
+    2.0.A38101//2275/A05:29-30:M11
+
+  The first number is the payload type code. The second is the address
+  qualifier. Then the ICAO aircraft id (or something that stands in for it).
+  The first item within the first pair of slashes is the emitter category
+  and the callsign (usually the squawk, N-number, or flight callsign). This
+  section is optional. The altitude is in the next set of slashes. The last
+  portion with be either a ``G`` is this is a TIS-B/ADS-R message sent by
+  a ground station, or ``A`` if a UAT message sent directly from an aircraft.
+
+  If the message is a UAT message, and the aircraft has received any messages
+  from a UAT ground station, the aircraft can show how many messages it has
+  received from a particular ground station on a particular data channel.
+  Each ground station has a 'TIS-B Site ID' in the range of 1 to 15. Each
+  site id is allocated a particular set of channel numbers that it will
+  transmit on. High power stations get 4 channels, medium stations 3, low
+  power stations 2, and surface stations 1. Each second, there is (for lack
+  of a better term) the 'data channel of the second'. This is determined by
+  the number of seconds after UTC midnight. All ADS-B messages sent by aircraft
+  will send the number of FIS-B packets they received from the 'data channel
+  of the second' in the last 32 seconds. In the comment, this can look like:
+  ``A05:29-30:M11``. ``A`` means sent by aircraft, ``05`` is the 'data channel
+  of the second', ``29-30`` is the range of FIS-B packets received by the
+  aircraft on that data channel in the last 32 seconds, and ``M11`` maps the
+  data channel back to the TIS-B site id and the power of the station
+  (``H``, ``M``, ``L``, ``S``).
+
+  The full data channel FIS-B packets received section is not sent if the
+  number of packets received is zero. Some planes never report any packets.
+  This data is useful in that by collecting data over time, you can determine
+  the range of each ground station based on altitude (you would also need to
+  decode the position information).
+
+  Args:
+    hexBlock (str): String of hex characters representing the ADS-B message.
+    timeStr (str): String of a floating number representing the number of
+      seconds and fractions of a seconds in UTC at which the packet was received.
+
+  Returns:
+    string: String containing a partial decode of the ADS-B message. See above 
+      for formats.
+  """
+  adsbBytes = bytes.fromhex(hexBlock)
+  payloadTypeCode = (adsbBytes[0] & 0xF8) >> 3
+  addrQualifier = (adsbBytes[0] & 0x07)
+  addr = hexBlock[2:8].upper()
+
+  decodeStr = f'/{payloadTypeCode}.{addrQualifier}.{addr}'
+  callSign = ''
+
+  if payloadTypeCode in [1, 3]:
+    # Decode emitter category and call sign
+    callSign = decodeCallSign(adsbBytes[17:23])
+    decodeStr += f'/{callSign[0]}.{callSign[1:]}/'
+  else:
+    decodeStr += '//'
+
+  # Calculate altitude
+  codedAltitude = (adsbBytes[10] << 4) | (adsbBytes[11] >> 4)
+  if codedAltitude in [0, 4095]:
+    if codedAltitude == 0:
+      altitude = '?'
+    else:
+      altitude = '>101337.5'
+  else:
+    altitude = str((codedAltitude - 41) * 25)
+
+  decodeStr += f'{altitude}/'
+
+  if addrQualifier in [0, 1, 4, 5]:
+    # Get the uplink feedback. If other than zero, display data channel
+    uplinkFeedback = (adsbBytes[16] & 0x07)
+
+    if uplinkFeedback != 0:
+      # Figure out the data channel for this UTC second
+      packetTime = datetime.fromtimestamp(float(timeStr))
+      secsPastMidnightMod32 = int((packetTime - packetTime.replace(hour=0, \
+          minute=0, second=0)).total_seconds()) % 32
+      dataChan = 32 - secsPastMidnightMod32 + 1
+      if dataChan == 33:
+        dataChan = 1
+      
+      decodeStr += f'A{dataChan:02d}:{UPLINK_FEEDBACK_TABLE[uplinkFeedback]}'
+    else:
+      decodeStr += 'A'
+
+    # If the uplinkFeedback is > 0, also add TIS-B site id information.
+    if uplinkFeedback > 0:
+      decodeStr += f':{FISB_DATA_CHANNEL[dataChan - 1]}'
+
+  elif (addrQualifier in [2, 3]) and (payloadTypeCode >= 0) \
+      and (payloadTypeCode <= 10):
+    decodeStr += 'G'
+
+  return decodeStr
 
 def adsbHexBlockFormatted(hexBlock, signalStrengthStr, timeStr, errs, \
     syncErrors):
@@ -845,37 +1121,7 @@ def adsbHexBlockFormatted(hexBlock, signalStrengthStr, timeStr, errs, \
   hexBlockLen = len(hexBlock)
   
   if adsb_partial_decode:
-    adsbBytes = bytes.fromhex(hexBlock)
-    payloadTypeCode = (adsbBytes[0] & 0xF8) >> 3
-    addrQualifier = (adsbBytes[0] & 0x07)
-    addr = hexBlock[2:8].upper()
-
-    decodeStr = f'/{payloadTypeCode}.{addrQualifier}.{addr}'
-    callSign = ''
-
-    if payloadTypeCode in [1, 3]:
-      # Decode emitter category and call sign
-      callSign = decodeCallSign(adsbBytes[17:23])
-      decodeStr += f'/{callSign[0]}.{callSign[1:]}/'
-    else:
-      decodeStr += '//'
-
-    if addrQualifier in [0, 1, 4, 5]:
-      # Figure out the data channel for this UTC second
-      packetTime = datetime.fromtimestamp(float(timeStr))
-      secsPastMidnightMod32 = int((packetTime - packetTime.replace(hour=0, minute=0,\
-          second=0)).total_seconds()) % 32
-      dataChan = 32 - secsPastMidnightMod32 + 1
-      if dataChan == 33:
-        dataChan = 1
-      
-      # Display data channel and resultant value.
-      uplinkFeedback = (adsbBytes[16] & 0x07)
-      decodeStr += f'U{dataChan:02d}:{UPLINK_FEEDBACK_TABLE[uplinkFeedback]}'
-    elif (addrQualifier in [2, 3]) and (payloadTypeCode >= 0) \
-        and (payloadTypeCode <= 10):
-      tisbSiteId = (adsbBytes[16] & 0x0F)
-      decodeStr += f'T{tisbSiteId:02d}'
+    decodeStr = miniAdsbDecode(hexBlock, timeStr)
 
   return '-' + hexBlock + ';rs=' + str(syncErrors) + '/' + str(errs) + \
        f'{decodeStr};ss=' + signalStrengthStr + ';t=' + timeStr
@@ -928,7 +1174,7 @@ def processFisbPacket(samples, timeStr, signalStrengthStr, syncErrors, \
       timeStr, hexErrs, syncErrors)
   
   # Did not error correct.
-  hexErrsStr = hexErrsToStr(hexErrs)
+  hexErrsStr = fisbHexErrsToStr(hexErrs)
 
   if show_failed_fisb:
 
@@ -965,6 +1211,8 @@ def processAdsbPacket(samples, timeStr, signalStrengthStr, syncErrors, \
     * Hex string representing the error corrected message. If the message
       was not error corrected, this will be ``None``.
       If we are displaying errors, this will be the error string.
+    * ``True`` is this is a short ADS-B message (payload type code 0), or
+      ``False`` if a long ADS-B message.
   """
   # Starting offset is 1. This is where tha actual sample data begins.
   offset = 1
