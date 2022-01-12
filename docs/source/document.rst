@@ -358,7 +358,7 @@ Failed FIS-B and ADS-B messages will look something like: ::
   #FAILED-ADS-B 2/99 ss=1.66 t=1639229048.478
   1639229048.478000.A.01658613.2
 
-Again, each will be a single line. The ``#`` in the front indicates A
+Again, each will be a single line. The ``#`` in the front indicates a
 comment. ``fisb-decode`` will ignore this. The data on the line is
 similar to what we just discussed. The last portion of the line is
 the attribute string that ``demod_978`` passed to ``ec_978.py`` and is
