@@ -211,7 +211,8 @@ message. Either the frames will fit exactly in a message, or they will
 end before the end of the message. In which case the remainder of the
 message will be zeros. If a message doesn't pass this test, it isn't
 valid. Passing this test doesn't mean it's valid either, but the
-likelihood is much higher.
+likelihood is much higher. Currently, because essentially all of the decodes
+from ec_978.py are correct, this mechanism is not used as a double check.
 
 Explanation of program output
 =============================
@@ -232,7 +233,7 @@ FIS-B, ADS-B long, and ADS-B short. A FIS-B packet will look like: ::
   0fc308083ed0d0211320902010a01580100020902015a0130010001001102010a01
   5209181108010011020162092011000108110000000000000000000000000000000
   0000000000000000000000000000000000000000000000000000000000000
-  ;rs=0/01:02:01:01:00:03/007;ss=3.76;t=1639224615.144
+  ;rs=0/01:02:01:01:00:03;ss=3.76;t=1639224615.144
 
 Note that in reality, all packets are a single line. The examples are broken
 up for clarity. The '**+**' at the beginning indicates a FIS-B packet.
@@ -256,39 +257,16 @@ After that, separated by ';', are three items:
   parts, each with their own set of error correction bits. Each
   block can have up to 10 errors before it is considered
   uncorrectable. If a packet has more than 10 errors, the number of
-  errors will be listed as ``99``. You will see this when printing errors
-  and very commonly in the form of: ``04:99:99:99:99:99``. This is
-  what you will see with an empty packet. ``ec_978.py`` looked at
+  errors will be listed as ``98``. You will see this when printing errors.
+  More commonly, you will see something like:
+  ``04:99:99:99:99:99``. This implies that the first block of the packet
+  was decoded with 4 errors, but the message only had a small amount
+  of content. This is
+  what you will see with an empty packet (they only contain basically
+  the latitude and longitude of the ground station). ``ec_978.py`` looked at
   the packet and determined, by only looking at block 0, that this
   packet is empty. In that case it doesn't even look at the other
-  blocks.
-
-  The last component of the ``rs=`` string in our example (``/007``)
-  represents the total number of times we had to call the
-  Reed-Solomon error corrector. For a normal packet (one that we don't short
-  circuit decoding because it is an empty packet), the smallest number
-  this can be is 6, or one for each block. If a block needed to
-  try additional shift values to decode, the number will be higher
-  than 6.
-  If we were able to detect a packet that ended early, the number of
-  Reed-Solomon decodes can be less than 6.
-  You will occasionally see numbers over 500. This means that
-  we could not obtain a result with the original packet, and needed
-  to shift one bit over to make a new packet and try the process again.
-  Subtracting 500 from the number gives you the number of
-  Reed-Solomon attempts for the new packet.
-
-  For a typical non-empty FIS-B packet, under good receiving conditions,
-  you will see lots of ``/006`` and the occasional ``/007``. ``/006``
-  means that it decoded all packets without any shifting. ``/007``
-  means that the first packet failed to decode, and the first shift
-  was used. The first shift worked, so for all remaining packets, the
-  last shift that worked was the first one tested, and the remaining 5 subparts all
-  decoded on the first try. The first shift tried after
-  no shift is ``-0.75``, which means
-  to shift the packet 75% to the set of bits after the current set of
-  bits. This is the empirically derived shift to deliver the most
-  decodes if no shift didn't work.
+  blocks. The '99' means that this packet was not even looked at.
 
 * ``ss=3.76`` is the signal strength. It has no units and isn't related
   to anything. It is just a relative indication of the signal strength
@@ -332,8 +310,7 @@ After that, separated by ';', are three items:
   Another interesting thing about message times in FIS-B is that they
   are only sent at specific times. There are 32 channels for sending FIS-B
   messages.
-  Each channel has a specific time the message will begin to be transmitted
-  (see :ref:`FIS-B message start times <fisb-start-times>`).
+  Each channel has a specific time the message will begin to be transmitted.
   Each second the messages for a specific ground station will
   be sent in 2-4
   different channels (depending on ground station strength),
@@ -369,18 +346,18 @@ study. In order to get failed error messages, you must supply the ``--ff``
 A long ADS-B message will look like: ::
 
   -0b28c0ee3879938546c605d6100600c01105eded2ded2d0ad2740300000000000000
-  ;rs=0/1/002;ss=3.29;t=1639226996.293
+  ;rs=0/1;ss=3.29;t=1639226996.293
 
 It starts with a dash. The format is similar to FIS-B except the
-``rs=0/1/002`` reflects 0 sync code errors (as in FIS-B), 1 Reed-Solomon
-error was corrected, and two attempts at Reed-Solomon error
-detection were required. There is only one Reed-Solomon block
+``rs=0/1`` reflects 0 sync code errors (as in FIS-B), and one Reed-Solomon
+error was corrected.
+There is only one Reed-Solomon block
 in ADS-B messages, so you
 will only see a single number. Not six as in FIS-B.
 
 A short ADS-B message is just like a long one, but shorter! ::
 
-  -00a97c0d3868cd856ac6076910ac2c602800;rs=1/2/005;ss=3.56;t=1639228834.048
+  -00a97c0d3868cd856ac6076910ac2c602800;rs=1/2;ss=3.56;t=1639228834.048
 
 Theory of operation
 ===================
@@ -557,10 +534,68 @@ ADS-B.
 If we decode all six blocks we create an output string and send it to
 standard output.
 
-If the packet doesn't decode, we can send an error message to standard output
-if the user wants us to.
-We also have the option of saving errored out packets to a directory
-for further study.
+If the packet doesn't decode, we then try some other techniques. Before
+talking about them, lets discuss what we don't do.
+
+Much effort was put into a number of techniques that didn't work out.
+The first of these is **erasures**. Erasures are the siren song of
+Reed-Solomon. They allow you to specify what parts of the message you think 
+are bad. In FIS-B, Reed-Solomon will find and correct up to 10 errors,
+or 20 erasures (or some combination of the above). This is called the
+Singleton Bound. So the thought is to find the
+values closest to zero and declare those as erasures. The problem is that
+if your message has less than 20 errors, error correction and erasure
+specification will work great. But if you message has more than this, all
+bets are off. Adding erasures to a message with more errors than the
+Singleton Bound will often report and return a corrected message that is 
+total garbage. In fact, if you add enough erasures, you can get most anything
+to decode. But it won't decode correctly.
+
+In our case, we would only try to resort to erasures when the initial decode failed
+at >10 errors. We are then betting that we have 20 or less errors and
+can replace some of the '*find and correct automatically bytes*' with '*erasure
+bytes*' (there is 1:2 ratio). And if the message did have less than
+20 total errors, this would
+work. But we have no idea how many errors a message has. And we 
+don't have a good way to check a repaired packet for accuracy.
+
+Another technique we tried was expanding on our technique of shifting the
+bits back and forth to find a better sampling point. You can think of this
+as horizontal shifting. We added vertical shifting and combined the two.
+Vertical shifts can nudge bits around zero up or down. Looking at graphs
+of signals you see a number of cases where this is a problem. In the end,
+we had the same problem: we could get corrections but couldn't verify their
+correctness. If FIS-B had an alternative check, like CRC, we could probably
+get a much higher success rate because we could double check with another
+method.
+
+So what to do?
+
+We can't use erasures, but we can change data that we know is true (or
+almost certain to be true). The easiest example of this is block 0 of
+FIS-B. The first 8 bytes has a number of bits that are always the same.
+So we can change the packet to reflect this before we try to error
+correct it. Similarly, if we are a fixed station and only getting one,
+or at most a few ground stations, we know what the first six bytes will
+be. So we can try those. The '``--f6b``' flag in ec_978.py will let us 
+set these values. Often, these two techniques alone will allow us to
+decode FIS-B block 0. Since block 0 is often the only contents in a 
+message, we can detect this and avoid even trying to decode the other
+blocks.
+
+One other technique is to detect running zeros at the end of block. It's
+not difficult to come up with a heuristic to find a block with running 
+zeros at the end. If we find running zeros, we set the them to the
+average zero for the entire block and attempt to decode again.
+
+Together, the above techniques can correct more than 13% of packet
+decode errors.
+
+It is possible to think of other methods, such as correcting errors in 
+text messages, or using recent past messages to suggest current values
+(FIS-B likes to send the same things over and over). You don't have to
+fix many bytes to increase the decode rate. You just need to get under
+the Singleton Bound.
 
 server_978.py
 -------------
@@ -634,30 +669,117 @@ ec_978.py
 ---------
 ::
 
- usage: ec_978.py [-h] [--ff] [--fa] [--se SE] [--re RE]
+  usage: ec_978.py [-h] [--ff] [--fa] [--ll] [--nobzfb] [--noftz] [--apd] [--f6b F6B]
+                 [--se SE] [--re RE]
 
- ec_978.py: Error correct FIS-B and ADS-B demodulated data from 'demod_978'.
+  ec_978.py: Error correct FIS-B and ADS-B demodulated data from 'demod_978'.
 
- Accepts FIS-B and ADS-B data supplied by 'demod_978' and send any output to
- standard output. By default will not produce any error messages for
- bad packets.
+  Accepts FIS-B and ADS-B data supplied by 'demod_978' and send any output to
+  standard output.
 
- The '--se' argument requires a directory where errors will be stored.
- This directory should be used by the '--re' argument in a future run to reprocess
- the errors. When the '--se' argument is given, you need to supply either '--fa', 
- '--ff' or both to indicate the type of error(s) you wish to save.
+  ff, fa
+  ======
+  By default will not produce any error messages for
+  bad packets. To show errored packets use '--ff' for FIS-B and '--fa' for
+  ADS-B.
 
- When errors are reprocessed with '--re', the '--ff' and '--fa' arguments
- are automatically set, and any '--se' argument is ignored.
+  se, re
+  ======
+  The '--se' argument requires a directory where errors will be stored.
+  This directory should be used by the '--re' argument in a future run to reprocess
+  the errors. When the '--se' argument is given, you need to supply either '--fa', 
+  '--ff' or both to indicate the type of error(s) you wish to save.
 
- optional arguments:
-  -h, --help  show this help message and exit
-  --ff        Print failed FIS-B packet information as a comment.
-  --fa        Print failed ADS-B packet information as a comment.
-  --ll        Print lowest levels of FIS-B and ADS-B signal levels.
-  --se SE     Directory to save failed error corrections.
-  --re RE     Directory to reprocess errors.
+  When errors are reprocessed with '--re', the '--ff' and '--fa' arguments
+  are automatically set, and any '--se' argument is ignored.
 
+  nobzfb, noftz
+  =============
+  Normal operation is to attempt to correct known bad FIS-B packets. There
+  are two processes that are used if the packet is not decoded correctly. 
+  The first is to apply fixed bits (bits that are always 1 or 0) to the first
+  portion of a message. The other is to attempt to find runs of trailing zeros.
+  You can turn these behaviors off.
+
+  '--nobzfb' will turn off 'block zero fixed bits'. These are bits in FIS-B
+  block zero that have known fixed values (always 1 or always 0).
+
+  '--noftz' will prevent the recognition of a block with trailing zeros
+  (a string of zeros at the end).
+
+  f6b
+  ===
+  If you have a fixed station and only receive one, or a few ground stations, you
+  can use the '--f6b' (first six bytes) flag to force those values in packets
+  that initially fail decoding. More than one value can be listed if enclosed in
+  quotes and separated by spaces. Examples of use would be:
+
+      --f6b 3514c952d65c
+      --f6b '3514c952d65c 38f18185534c'
+
+  ll
+  ==
+  demod_978 uses a cutoff signal level to avoid trying to decode noise packets
+  that have the correct sync bits. '--ll' (lowest level) will display on
+  standard error the lowest level that either a FIS-B packet or ADS-B packet
+  (each have their own lowest level) decoded at. If a lower level is found, it
+  is display. This is a good way to find an optimal setting for demod_978's
+  '-l' switch.
+
+  apd
+  ===
+  This stands for ADS-B partial decode and will add an additional comment to
+  the decode of ADS-B packets.
+
+  Example comments are: ::
+
+    1.2.A79B5F/1.N59DF/8500/G
+    0.0.A38101//2275/A
+    1.0.A38101/1.1200/2325/A23:32:L7
+    2.0.A38101//2275/A05:29-30:M11
+
+  The first number is the payload type code. The second is the address
+  qualifier (see DO-282B for what these values mean).
+  Then the ICAO aircraft id (or something that stands in for it).
+  The first item within the first pair of slashes is the emitter category
+  (lots of options here, but most often: 0=unknown, 1=light acft,
+  2=small acft, 3-6=heavy acft, 7=heli) and the callsign (usually the squawk,
+  N-number, or flight callsign). This section is optional. The altitude is in
+  the next set of slashes. The last portion with be either a 'G' is this is
+  a TIS-B/ADS-R message sent by a ground station, or 'A' if a UAT message
+  sent directly from an aircraft.
+
+  If the message is a UAT message, and the aircraft has received any FIS-B messages
+  from a ground station, the aircraft can show how many messages it has
+  received from a particular ground station on a particular data channel.
+  Each ground station has a 'TIS-B Site ID' in the range of 1 to 15. Each
+  site id is allocated a particular set of channel numbers that it will
+  transmit on. High power stations get 4 channels, medium stations 3, low
+  power stations 2, and surface stations 1. Each second, there is (for lack
+  of a better term) the 'data channel of the second'. This is determined by
+  the number of seconds after UTC midnight. All ADS-B messages sent by aircraft
+  will send the number of FIS-B packets they received from the 'data channel
+  of the second' in the last 32 seconds. In the comment, this can look like:
+  'A05:29-30:M11'. 'A' means sent by aircraft, '05' is the 'data channel
+  of the second', '29-30' is the range of FIS-B packets received by the
+  aircraft on that data channel in the last 32 seconds, and 'M11' maps the
+  data channel back to the TIS-B site id and the power of the station
+  ('H', 'M', 'L', 'S').
+
+  The full data channel FIS-B packets received section is not sent if the
+  number of packets received is zero. Some planes never report any packets.
+
+  optional arguments:
+    -h, --help  show this help message and exit
+    --ff        Print failed FIS-B packet information as a comment.
+    --fa        Print failed ADS-B packet information as a comment.
+    --ll        Print lowest levels of FIS-B and ADS-B signal levels.
+    --nobzfb    Don't repair block zero fixed bits.
+    --noftz     Don't fix trailing zeros.
+    --apd       Do a partial decode of ADS-B messages.
+    --f6b F6B   Hex strings of first 6 bytes of block zero.
+    --se SE     Directory to save failed error corrections.
+    --re RE     Directory to reprocess errors.
 
 server_978.py
 -------------
@@ -706,109 +828,3 @@ Then (assuming 'fisb-978' was cloned in your home directory): ::
 The html documentation will be found in ``fisb-978/docs/build/html``.
 Load ``index.html`` in your browser to view. Sphinx is configured to
 link directly to the source, so this is an easy way to explore the code.
-
-Reference Data
-==============
-
-.. _fisb-start-times:
-
-.. list-table:: FIS-B Message Start Times
-   :widths: 25 25 25
-   :header-rows: 1
-
-   * - Channel
-     - MSO
-     - Time in MS
-   * -  1
-     -  22
-     - 0.0060
-   * -  2
-     -  44
-     - 0.0115
-   * -  3
-     -  66
-     - 0.0170
-   * -  4
-     -  88
-     - 0.0225
-   * -  5
-     - 110
-     - 0.0280
-   * -  6
-     - 132
-     - 0.0335
-   * -  7
-     - 154
-     - 0.0390
-   * -  8
-     - 176
-     - 0.0445
-   * -  9
-     - 198
-     - 0.0500
-   * - 10
-     - 220
-     - 0.0555
-   * - 11
-     - 242
-     - 0.0610
-   * - 12
-     - 264
-     - 0.0665
-   * - 13
-     - 286
-     - 0.0720
-   * - 14
-     - 308
-     - 0.0775
-   * - 15
-     - 330
-     - 0.0830
-   * - 16
-     - 352
-     - 0.0885
-   * - 17
-     - 374
-     - 0.0940
-   * - 18
-     - 396
-     - 0.0995
-   * - 19
-     - 418
-     - 0.1050
-   * - 20
-     - 440
-     - 0.1105
-   * - 21
-     - 462
-     - 0.1160
-   * - 22
-     - 484
-     - 0.1215
-   * - 23
-     - 506
-     - 0.1270
-   * - 24
-     - 528
-     - 0.1325
-   * - 25
-     - 550
-     - 0.1380
-   * - 26
-     - 572
-     - 0.1435
-   * - 27
-     - 594
-     - 0.1490
-   * - 28
-     - 616
-     - 0.1545
-   * - 29
-     - 638
-     - 0.1600
-   * - 30
-     - 660
-     - 0.1655
-   * - 31
-     - 682
-     - 0.1710

@@ -131,14 +131,14 @@ block_zero_fixed_bits = True
 # Repair blocks that end in trailing zeros.
 fix_trailing_zeros = True
 
-# Set to True if replacing lat/long values. Set by --latlong.
-replace_lat_long = False
+# Set to True if replacing first 6 byte values. Set by --f6b.
+replace_f6b = False
 
-# For --latlong flag, holds number of lat/longs to check.
-latLongArrayLen = 0
+# For --f6b flag, holds number of 1st 6 byte values to check.
+f6bArrayLen = 0
 
-# For --latlong flag, contains contents of lat/longs.
-latLongArray = None
+# For --f6b flag, contains contents of 1st 6 byte values.
+f6bArray = None
 
 # Reed-Solomon error correction Ground Uplink parameters:
 #   Symbol Size: 8
@@ -221,7 +221,7 @@ def block0ThoroughCheck(hexBlocks):
   # Didn't find anything
   return False, hexBlocks
 
-def packAndTest(rs, bits, latLong = False):
+def packAndTest(rs, bits, f6b = False):
   """
   Take a set of integers, each integer representing a
   single bit, and turn them into binary and pack them into
@@ -233,7 +233,7 @@ def packAndTest(rs, bits, latLong = False):
       ADS-B short, and ADS-B long.
     bits (nparray): int32 array containing one integer per bit
       for a single FIS-B block or an entire ADS-B message.
-    latLong (bool): ``True`` if we are forcing the first 6 bytes
+    f6b (bool): ``True`` if we are forcing the first 6 bytes
       of FIS-B block 0 to be a predetermined value. Otherwise ``False``.
 
   Returns:
@@ -246,7 +246,7 @@ def packAndTest(rs, bits, latLong = False):
   # Turn integers to 1/0 bits and pack in bytes.
   byts = np.packbits(np.where((bits > 0), 1, 0))
 
-  if not latLong:
+  if not f6b:
     # Do Reed-Solomon error correction.
     errCorrected, errs = rs.decode(byts)
 
@@ -257,8 +257,8 @@ def packAndTest(rs, bits, latLong = False):
       return None, errs
   else:
     # Try forced value for each entry in list.
-    for i in range(0, latLongArrayLen):
-      byts[0:6] = latLongArray[i][0:6]
+    for i in range(0, f6bArrayLen):
+      byts[0:6] = f6bArray[i][0:6]
 
       # Do Reed-Solomon error correction.
       errCorrected, errs = rs.decode(byts)
@@ -421,7 +421,7 @@ def shiftBits(bits, neighborBits, shiftAmount):
   return shiftedBits
 
 def tryShiftBits(rs, bits, bitsBefore, bitsAfter, tryFirst, \
-      latLong = False, block0FixedBits = False):
+      f6b = False, block0FixedBits = False):
   """
   Given 3 packets of data (sample, before sample, and
   after sample), error correct the sample using various shifts.
@@ -442,7 +442,7 @@ def tryShiftBits(rs, bits, bitsBefore, bitsAfter, tryFirst, \
     tryFirst (int): Try this shift first. Is ignored if -1.
       This is used for FIS-B packets to set the shift to one
       that worked for a previous shift.
-    latLong (bool): ``True`` if we are to replace the first 6 bytes of a block
+    f6b (bool): ``True`` if we are to replace the first 6 bytes of a block
       0 packet with a set of fixed values. If this is ``True``, it is assumed that
       ``bits`` is from a block 0 packet.
     block0FixedBits (bool): ``True`` if we are to force a set of constant bits
@@ -470,7 +470,7 @@ def tryShiftBits(rs, bits, bitsBefore, bitsAfter, tryFirst, \
     else:
       shiftedBits = shiftBits(bits, bitsAfter, -tryFirst)
 
-    errCorrectedHex, errs = packAndTest(rs, shiftedBits, latLong)
+    errCorrectedHex, errs = packAndTest(rs, shiftedBits, f6b)
     if errs >= 0:
       return True, errCorrectedHex, errs, tryFirst
 
@@ -505,7 +505,7 @@ def tryShiftBits(rs, bits, bitsBefore, bitsAfter, tryFirst, \
       shiftedBits[74] = -10000   # Reserved  (UAT Frame byte 2)
       shiftedBits[75] = -10000   # Reserved  (UAT Frame byte 2)
       
-    errCorrectedHex, errs = packAndTest(rs, shiftedBits, latLong)
+    errCorrectedHex, errs = packAndTest(rs, shiftedBits, f6b)
     if errs >= 0:
       return True, errCorrectedHex, errs, shift
 
@@ -520,8 +520,8 @@ def blockZeroTricks(bits, bitsBefore, bitsAfter, hexBlocks):
   The first 6 bytes of block zero contain the latitude and longitude of the
   ground station. With the receiver at a fixed location, only one value
   will usually be received. These can be forced into ``bits``. This is set with
-  the ``--llb`` flag. It is possible to provide more than one set of 6 bytes
-  with the ``--llb`` flag. If provided, all will be tried.
+  the ``--f6b`` flag. It is possible to provide more than one set of 6 bytes
+  with the ``--f6b`` flag. If provided, all will be tried.
 
   Block 0 fixed bits are a set of bits always set (either 1 or 0) in block 0.
   This option is normally on, but can be turned off with the ``--nobzfb`` flag.
@@ -550,11 +550,11 @@ def blockZeroTricks(bits, bitsBefore, bitsAfter, hexBlocks):
   """
   # Using this in a file of 110951 all cause errors resulted in
   # this additional number of complete packet decodes:
-  #   lat/long fix only:    4908 (4.4%)
+  #   1st 6 byte fix only:  4908 (4.4%)
   #   block zero fix only:   756 (0.7%)
   #   combined:             5564 (5.0%)
   status, errCorrectedHex, errs, _ = tryShiftBits(rsFisb, bits, bitsBefore, \
-        bitsAfter, -1, replace_lat_long, block_zero_fixed_bits)
+        bitsAfter, -1, replace_f6b, block_zero_fixed_bits)
   if status:
     hexBlocks[0] = errCorrectedHex
     return True, hexBlocks, errs
@@ -800,7 +800,7 @@ def decodeFisb(samples, offset, hexBlocks, hexErrs):
 
     # Extra checks for block 0
     if block == 0:
-      if replace_lat_long or block_zero_fixed_bits:
+      if replace_f6b or block_zero_fixed_bits:
         status, hexBlocks, hexErrs[block] = blockZeroTricks(bits, \
             bitsBefore, bitsAfter, hexBlocks)
         if status:
@@ -1013,7 +1013,7 @@ def miniAdsbDecode(hexBlock, timeStr):
   """
   Creates a tiny decode of a small portion of the ADS-B message which can 
   be printed with the hex decode of the packet in the comment section.
-  It is enabled by specifing the ``--apd`` option.
+  It is enabled by specifying the ``--apd`` option.
 
   Example comments are: ::
 
@@ -1472,10 +1472,16 @@ if __name__ == "__main__":
     """ec_978.py: Error correct FIS-B and ADS-B demodulated data from 'demod_978'.
 
 Accepts FIS-B and ADS-B data supplied by 'demod_978' and send any output to
-standard output. By default will not produce any error messages for
+standard output.
+
+ff, fa
+======
+By default will not produce any error messages for
 bad packets. To show errored packets use '--ff' for FIS-B and '--fa' for
 ADS-B.
 
+se, re
+======
 The '--se' argument requires a directory where errors will be stored.
 This directory should be used by the '--re' argument in a future run to reprocess
 the errors. When the '--se' argument is given, you need to supply either '--fa', 
@@ -1484,11 +1490,82 @@ the errors. When the '--se' argument is given, you need to supply either '--fa',
 When errors are reprocessed with '--re', the '--ff' and '--fa' arguments
 are automatically set, and any '--se' argument is ignored.
 
-Normal operation is to attempt to correct known bad FIS-B packets. You can turn this
-off. '--nobzfb' will turn off 'block zero fixed bits'. These are bits in FIS-B
-block zero that have known fixed values (always 1 or always 0). '--noftz' will
-prevent the recognition of a block with trailing zeros (a string of zeros at the
-end)."""
+nobzfb, noftz
+=============
+Normal operation is to attempt to correct known bad FIS-B packets. There
+are two processes that are used if the packet is not decoded correctly. 
+The first is to apply fixed bits (bits that are always 1 or 0) to the first
+portion of a message. The other is to attempt to find runs of trailing zeros.
+You can turn these behaviors off.
+
+'--nobzfb' will turn off 'block zero fixed bits'. These are bits in FIS-B
+block zero that have known fixed values (always 1 or always 0).
+
+'--noftz' will prevent the recognition of a block with trailing zeros
+(a string of zeros at the end).
+
+f6b
+===
+If you have a fixed station and only receive one, or a few ground stations, you
+can use the '--f6b' (first six bytes) flag to force those values in packets
+that initially fail decoding. More than one value can be listed if enclosed in
+quotes and separated by spaces. Examples of use would be:
+
+    --f6b 3514c952d65c
+    --f6b '3514c952d65c 38f18185534c'
+
+ll
+==
+demod_978 uses a cutoff signal level to avoid trying to decode noise packets
+that have the correct sync bits. '--ll' (lowest level) will display on
+standard error the lowest level that either a FIS-B packet or ADS-B packet
+(each have their own lowest level) decoded at. If a lower level is found, it
+is display. This is a good way to find an optimal setting for demod_978's
+'-l' switch.
+
+apd
+===
+This stands for ADS-B partial decode and will add an additional comment to
+the decode of ADS-B packets.
+
+Example comments are: ::
+
+  1.2.A79B5F/1.N59DF/8500/G
+  0.0.A38101//2275/A
+  1.0.A38101/1.1200/2325/A23:32:L7
+  2.0.A38101//2275/A05:29-30:M11
+
+The first number is the payload type code. The second is the address
+qualifier (see DO-282B for what these values mean).
+Then the ICAO aircraft id (or something that stands in for it).
+The first item within the first pair of slashes is the emitter category
+(lots of options here, but most often: 0=unknown, 1=light acft,
+2=small acft, 3-6=heavy acft, 7=heli) and the callsign (usually the squawk,
+N-number, or flight callsign). This section is optional. The altitude is in
+the next set of slashes. The last portion with be either a 'G' is this is
+a TIS-B/ADS-R message sent by a ground station, or 'A' if a UAT message
+sent directly from an aircraft.
+
+If the message is a UAT message, and the aircraft has received any FIS-B messages
+from a ground station, the aircraft can show how many messages it has
+received from a particular ground station on a particular data channel.
+Each ground station has a 'TIS-B Site ID' in the range of 1 to 15. Each
+site id is allocated a particular set of channel numbers that it will
+transmit on. High power stations get 4 channels, medium stations 3, low
+power stations 2, and surface stations 1. Each second, there is (for lack
+of a better term) the 'data channel of the second'. This is determined by
+the number of seconds after UTC midnight. All ADS-B messages sent by aircraft
+will send the number of FIS-B packets they received from the 'data channel
+of the second' in the last 32 seconds. In the comment, this can look like:
+'A05:29-30:M11'. 'A' means sent by aircraft, '05' is the 'data channel
+of the second', '29-30' is the range of FIS-B packets received by the
+aircraft on that data channel in the last 32 seconds, and 'M11' maps the
+data channel back to the TIS-B site id and the power of the station
+('H', 'M', 'L', 'S').
+
+The full data channel FIS-B packets received section is not sent if the
+number of packets received is zero. Some planes never report any packets.
+"""
   parser = argparse.ArgumentParser(description= hlpText, \
           formatter_class=RawTextHelpFormatter)
           
@@ -1505,7 +1582,7 @@ end)."""
     help="Don't fix trailing zeros.", action='store_true')
   parser.add_argument("--apd", \
     help='Do a partial decode of ADS-B messages.', action='store_true')
-  parser.add_argument("--llb", required=False, \
+  parser.add_argument("--f6b", required=False, \
     help='Hex strings of first 6 bytes of block zero.')
   parser.add_argument("--se", required=False, \
     help='Directory to save failed error corrections.')
@@ -1536,22 +1613,22 @@ end)."""
     dir_out_errors = args.se
     writingErrorFiles = True
 
-  # If using 1st 6 bytes of block zero. May have more than one lat/long
+  # If using 1st 6 bytes of block zero. May have more than one set of bytes
   # separated by whitspace.
-  if args.llb:
-    replace_lat_long = True
+  if args.f6b:
+    replace_f6b = True
 
-    hexStrList = args.llb.split()
+    hexStrList = args.f6b.split()
     
-    latLongArrayLen = len(hexStrList)
-    latLongArray = np.zeros((latLongArrayLen, 6), dtype=np.uint8)
+    f6bArrayLen = len(hexStrList)
+    f6bArray = np.zeros((f6bArrayLen, 6), dtype=np.uint8)
 
     for i, hexstr in enumerate(hexStrList):
       # Catch non-hex values
       try:
         int(hexstr, 16)
       except ValueError:
-        print('Illegal hex for --latlong', file=sys.stderr)
+        print('Illegal hex for --f6b', file=sys.stderr)
         sys.exit(1)
 
       # Length has to be 12
@@ -1561,7 +1638,7 @@ end)."""
 
       # Convert hex to array.
       for j in range(0, 6):
-        latLongArray[i][j] = int(hexstr[j*2:(j*2)+2], 16)
+        f6bArray[i][j] = int(hexstr[j*2:(j*2)+2], 16)
 
   # If reprocessing errors call mainReprocessErrors() else main()
   if args.re:
