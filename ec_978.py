@@ -876,7 +876,7 @@ def decodeAdsb(samples, offset, isShort):
 
   if status:
     # These don't always decode correctly. Make sure that short messages are 
-    # always payload type 0, and long messages are always payload types 1 to 6.
+    # always payload type 0, and long messages are always payload types 1 to 14.
     # Also make sure the length of the hex string matches the payload type.
     hexBlockLen = len(hexBlock)
     byte0 = bytes.fromhex(hexBlock[0:2])[0]
@@ -884,7 +884,7 @@ def decodeAdsb(samples, offset, isShort):
 
     if (payloadTypeCode == 0) and (hexBlockLen == 36):
       return True, hexBlock, errs
-    elif (payloadTypeCode > 0) and (payloadTypeCode < 7) \
+    elif payloadTypeCode in [1,2,3,4,5,6,11,12,13,14] \
         and (hexBlockLen == 68):
       return True, hexBlock, errs
 
