@@ -269,7 +269,7 @@ def packAndTest(rs, bits, f6b = False):
     
     return None, -74
 
-def extractBlockBitsFisb(samples, offset, blockNumber):
+def fisbExtractBlockBits(samples, offset, blockNumber):
   """
   Given a FIS-B block number, extract an integer array of data bits for the
   packet as supplied, as well as arrays for one sample before and 
@@ -318,7 +318,7 @@ def extractBlockBitsFisb(samples, offset, blockNumber):
   return np.reshape(bitsHolder, -1), np.reshape(bitsBeforeHolder, -1), \
          np.reshape(bitsAfterHolder, -1)
   
-def extractBlockBitsAdsb(samples, offset, isShort):
+def adsbExtractBlockBits(samples, offset, isShort):
   """
   Extract an integer array of data bits for the
   packet as supplied, as well as arrays for one sample before, and 
@@ -718,7 +718,7 @@ def fixZeros(block):
 
   return foundAnyZeros, block
 
-def decodeFisb(samples, offset, hexBlocks, hexErrs):
+def fisbDecode(samples, offset, hexBlocks, hexErrs):
   """
   Given a FIS-B raw message, attempt to error correct all blocks.
 
@@ -774,7 +774,7 @@ def decodeFisb(samples, offset, hexBlocks, hexErrs):
     if hexBlocks[block] != None:
       continue
 
-    bits, bitsBefore, bitsAfter = extractBlockBitsFisb(samples, offset, \
+    bits, bitsBefore, bitsAfter = fisbExtractBlockBits(samples, offset, \
       block)
     
     # Shift bits
@@ -840,7 +840,7 @@ def decodeFisb(samples, offset, hexBlocks, hexErrs):
   # Otherwise, all blocks were error corrected.
   return True, hexBlocks, hexErrs
 
-def decodeAdsb(samples, offset, isShort):
+def adsbDecode(samples, offset, isShort):
   """
   Given a ADS-B raw message, attempt to error correct all blocks.
 
@@ -868,7 +868,7 @@ def decodeAdsb(samples, offset, isShort):
     rs = rsAdsbL
 
   # Create the bits to use.
-  bits, bitsBefore, bitsAfter = extractBlockBitsAdsb(samples, \
+  bits, bitsBefore, bitsAfter = adsbExtractBlockBits(samples, \
     offset, isShort)
   
   # Shift bits
@@ -1009,7 +1009,7 @@ def decodeCallSign(byts):
   
   return str.rstrip()
 
-def miniAdsbDecode(hexBlock, timeStr):
+def adsbMiniDecode(hexBlock, timeStr):
   """
   Creates a tiny decode of a small portion of the ADS-B message which can 
   be printed with the hex decode of the packet in the comment section.
@@ -1141,12 +1141,12 @@ def adsbHexBlockFormatted(hexBlock, signalStrengthStr, timeStr, errs, \
   hexBlockLen = len(hexBlock)
   
   if adsb_partial_decode:
-    decodeStr = miniAdsbDecode(hexBlock, timeStr)
+    decodeStr = adsbMiniDecode(hexBlock, timeStr)
 
   return '-' + hexBlock + ';rs=' + str(syncErrors) + '/' + str(errs) + \
        f'{decodeStr};ss=' + signalStrengthStr + ';t=' + timeStr
 
-def processFisbPacket(samples, timeStr, signalStrengthStr, syncErrors, \
+def fisbProcessPacket(samples, timeStr, signalStrengthStr, syncErrors, \
     attrStr):
   """
   Takes raw FIS-B packet samples and will error correct to final hex string
@@ -1178,7 +1178,7 @@ def processFisbPacket(samples, timeStr, signalStrengthStr, syncErrors, \
   offset = 1
 
   # Start with simple sample error correction. This works most of the time.
-  didErrCorrect, hexBlocks, hexErrs = decodeFisb(samples, offset, None, \
+  didErrCorrect, hexBlocks, hexErrs = fisbDecode(samples, offset, None, \
       None)
 
   if didErrCorrect:
@@ -1186,7 +1186,7 @@ def processFisbPacket(samples, timeStr, signalStrengthStr, syncErrors, \
       signalStrengthStr, timeStr, hexErrs, syncErrors)
 
   # Try with added offset
-  didErrCorrect, hexBlocks, hexErrs = decodeFisb(samples, offset + 1, \
+  didErrCorrect, hexBlocks, hexErrs = fisbDecode(samples, offset + 1, \
       hexBlocks, hexErrs)
 
   if didErrCorrect:
@@ -1207,7 +1207,7 @@ def processFisbPacket(samples, timeStr, signalStrengthStr, syncErrors, \
 
   return False, hexErrsStr
 
-def processAdsbPacket(samples, timeStr, signalStrengthStr, syncErrors, \
+def adsbProcessPacket(samples, timeStr, signalStrengthStr, syncErrors, \
     attrStr):
   """
   Takes raw ADS-B packet samples and will error correct to final hex string
@@ -1252,27 +1252,27 @@ def processAdsbPacket(samples, timeStr, signalStrengthStr, syncErrors, \
   # things most likely to work most of the time first.
 
   # normal 94.2%
-  didErrCorrect, hexBlock, errs  = decodeAdsb(samples, offset, isShort)
+  didErrCorrect, hexBlock, errs  = adsbDecode(samples, offset, isShort)
   if didErrCorrect:
     return didErrCorrect, adsbHexBlockFormatted(hexBlock, signalStrengthStr, \
         timeStr, errs, syncErrors), isShort
   
   # opposite (we thought is was a long, but it was a short, or visa versa)
   # 2.9%
-  didErrCorrect, hexBlock, errs = decodeAdsb(samples, offset, not isShort)
+  didErrCorrect, hexBlock, errs = adsbDecode(samples, offset, not isShort)
   if didErrCorrect:
     return didErrCorrect, adsbHexBlockFormatted(hexBlock, signalStrengthStr, \
         timeStr, errs, syncErrors), isShort
   
   # opposite offset (switch long for short (or visa versa) and add offset) 2.3%
-  didErrCorrect, hexBlock, errs = decodeAdsb(samples, offset + 1, \
+  didErrCorrect, hexBlock, errs = adsbDecode(samples, offset + 1, \
       not isShort)
   if didErrCorrect:
     return didErrCorrect, adsbHexBlockFormatted(hexBlock, signalStrengthStr, \
         timeStr, errs, syncErrors), isShort
 
   # offset (take our original data and increase the offset) 0.4%
-  didErrCorrect, hexBlock, errs = decodeAdsb(samples, offset + 1, isShort)
+  didErrCorrect, hexBlock, errs = adsbDecode(samples, offset + 1, isShort)
   if didErrCorrect:
     return didErrCorrect, adsbHexBlockFormatted(hexBlock, signalStrengthStr, \
         timeStr, errs, syncErrors), isShort
@@ -1348,10 +1348,10 @@ def main():
       packet = np.frombuffer(packetBuf, np.int32)
 
       if isFisbPacket:
-        didErrCorrect, resultStr = processFisbPacket(packet, timeStr, \
+        didErrCorrect, resultStr = fisbProcessPacket(packet, timeStr, \
           signalStrengthString, syncErrors, attrStr)
       else:
-        didErrCorrect, resultStr, isShort = processAdsbPacket(packet, timeStr, \
+        didErrCorrect, resultStr, isShort = adsbProcessPacket(packet, timeStr, \
           signalStrengthString, syncErrors, attrStr)
 
       if didErrCorrect:
@@ -1455,10 +1455,10 @@ def mainReprocessErrors(errorDir):
     packet = np.frombuffer(packetBuf, np.int32)
 
     if isFisbPacket:
-      didErrCorrect, resultStr = processFisbPacket(packet, timeStr, \
+      didErrCorrect, resultStr = fisbProcessPacket(packet, timeStr, \
         signalStrengthString, syncErrors, attrStr)
     else:
-      didErrCorrect, resultStr, _ = processAdsbPacket(packet, timeStr, \
+      didErrCorrect, resultStr, _ = adsbProcessPacket(packet, timeStr, \
         signalStrengthString, syncErrors, attrStr)
 
     if didErrCorrect:
