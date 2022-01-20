@@ -788,7 +788,39 @@ ec_978.py
   number of packets received is zero. Some planes never report any
   packets.
 
-  optional arguments:
+  fet
+  ===
+  Display extra timing information in the FIS-B 'rs=' string. Using this
+  from a playback file will not give accurate results. Use this only with
+  real-time data. A typical string would look like:
+
+    /28:594:154.5/75/12/4
+
+  The first three numbers (28:594:154.5) are separated by colons because
+  they are actually three different manifestation of the same thing.
+  The first (28) is the 'Transmission Time Slot' (1-32) which relates to
+  the actual time the message was sent. '594' is the 'Message Start
+  Opportunity' or 'MSO'. All data sent in UAT messages (ground messages or
+  ADS-B) are referenced to MSOs. '154.5' is the actual millisecond time
+  of the current second the message was sent. There are formulas that
+  can directly convert between the first three values. They all represent
+  the same point in time.
+
+  The next number (75) is the time difference in milliseconds from when
+  the message was transmitted to when it was received. This represents 
+  the distance from the station to the receiver, the time spent in the
+  radio, and the computer processing time (mostly computer processing
+  time).
+
+  '12' is the 'TIS-B Site ID' (1-15). This is a fixed value for each
+  ground station. It defines which data channels will be used.
+
+  '4' is the 'Data Channel' for this transmission (1-32). It is directly
+  tied to the TIS-B Site ID.
+
+
+  Optional Arguments
+  ------------------
     -h, --help  show this help message and exit
     --ff        Print failed FIS-B packet information as a comment.
     --fa        Print failed ADS-B packet information as a comment.
@@ -796,6 +828,7 @@ ec_978.py
     --nobzfb    Don't repair block zero fixed bits.
     --noftz     Don't fix trailing zeros.
     --apd       Do a partial decode of ADS-B messages.
+    --fet       Show FIS-B extra timing information.
     --f6b F6B   Hex strings of first 6 bytes of block zero.
     --se SE     Directory to save failed error corrections.
     --re RE     Directory to reprocess errors.

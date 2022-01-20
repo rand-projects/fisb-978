@@ -117,6 +117,9 @@ show_failed_adsb = False
 # If True, do an ADS-B partial decode. Turned on by --apd flag.
 adsb_partial_decode = False
 
+# If True, show extra FIS-B timing information in FIS-B comment.
+fisb_extra_timing = False
+
 # Directory and flag for writing error files.
 dir_out_errors = None
 writingErrorFiles = False
@@ -681,7 +684,7 @@ def fixZeros(block):
   # Dived the block into 128 bit 'quarters', starting from the back.
   for i in range(576, 63, -128):
     sample = block[i-128:i]
-    percentAboveAveOne = computePercentAboveAveOne(sample, aveOne, 128, 1.10)
+    percentAboveAveOne = computePercentAboveAveOne(sample, aveOne, 1.10)
     if percentAboveAveOne > 0.02:
       break
     if i != 64:
@@ -929,6 +932,38 @@ def fisbHexBlocksToHexString(hexBlocks):
   return '+' + hexBlocks[0] + hexBlocks[1] + hexBlocks[2] + \
     hexBlocks[3] + hexBlocks[4] + hexBlocks[5]
 
+def fisbTimingDecode(hexBlock0, timeStr):
+  # Turn hexBlock0 into bytes array and extract slotId and TIS-B site ID
+  block0Bytes = bytes.fromhex(hexBlock0)
+  slotId = block0Bytes[6] & 0x1f
+  tisbSiteId = (block0Bytes[7] >>4) & 0x0f
+
+  # Calculate time in ms packet transmitted. Each slot is 5.5ms and
+  # MSOs start at 6ms
+  xmtMs = 6 + (slotId * 5.5)
+
+  # Calculate MSO. Each slot takes up 22 MSOs
+  mso = slotId * 22
+  
+  timeStrAsFloat = float(timeStr)
+  msPartOfTimeStr = timeStrAsFloat - int(timeStrAsFloat)
+
+  xmtDelay = int((msPartOfTimeStr * 1000) - xmtMs)
+
+  # Get time in seconds past midnight (for data channel determination)
+  packetTime = datetime.fromtimestamp(timeStrAsFloat, tz=timezone.utc)
+  secsPastMidnightMod32 = int((packetTime - packetTime.replace(hour=0, \
+          minute=0, second=0)).total_seconds()) % 32
+
+  dataChannel0Based = slotId - secsPastMidnightMod32
+
+  if dataChannel0Based < 0:
+    dataChannel0Based += 32
+            
+  dataChannel = dataChannel0Based + 1
+
+  return f'/{slotId+1}:{mso}:{xmtMs}/{xmtDelay}/{tisbSiteId}/{dataChannel}'
+  
 def fisbHexBlocksFormatted(hexBlocks, signalStrengthStr, timeStr, hexErrs, \
    syncErrors):
   """
@@ -952,8 +987,13 @@ def fisbHexBlocksFormatted(hexBlocks, signalStrengthStr, timeStr, hexErrs, \
   """
   rsErrStr = fisbHexErrsToStr(hexErrs)
 
+  timingDecodeStr = ''
+
+  if fisb_extra_timing:
+    timingDecodeStr = fisbTimingDecode(hexBlocks[0], timeStr)
+
   return fisbHexBlocksToHexString(hexBlocks) + ';rs=' + str(syncErrors) + '/' + \
-    rsErrStr + ';ss=' + signalStrengthStr + \
+    rsErrStr + timingDecodeStr + ';ss=' + signalStrengthStr + \
     ';t=' + timeStr
 
 def decodeBase40(val):
@@ -1095,7 +1135,7 @@ def adsbMiniDecode(hexBlock, timeStr):
 
     if uplinkFeedback != 0:
       # Figure out the data channel for this UTC second
-      packetTime = datetime.fromtimestamp(float(timeStr))
+      packetTime = datetime.fromtimestamp(float(timeStr), tz=timezone.utc)
       secsPastMidnightMod32 = int((packetTime - packetTime.replace(hour=0, \
           minute=0, second=0)).total_seconds()) % 32
       dataChan = 32 - secsPastMidnightMod32 + 1
@@ -1565,6 +1605,36 @@ data channel back to the TIS-B site id and the power of the station
 
 The full data channel FIS-B packets received section is not sent if the
 number of packets received is zero. Some planes never report any packets.
+
+fet
+===
+Display extra timing information in the FIS-B 'rs=' string. Using this
+from a playback file will not give accurate results. Use this only with
+real-time data. A typical string would look like:
+
+    /28:594:154.5/75/12/4
+
+The first three numbers (28:594:154.5) are separated by colons because
+they are actually three different manifestation of the same thing.
+The first (28) is the 'Transmission Time Slot' (1-32) which relates to
+the actual time the message was sent. '594' is the 'Message Start
+Opportunity' or 'MSO'. All data sent in UAT messages (ground messages or
+ADS-B) are referenced to MSOs. '154.5' is the actual millisecond time
+of the current second the message was sent. There are formulas that
+can directly convert between the first three values. They all represent
+the same point in time.
+
+The next number (75) is the time difference in milliseconds from when
+the message was transmitted to when it was received. This represents 
+the distance from the station to the receiver, the time spent in the
+radio, and the computer processing time (mostly computer processing
+time).
+
+'12' is the 'TIS-B Site ID' (1-15). This is a fixed value for each
+ground station. It defines which data channels will be used.
+
+'4' is the 'Data Channel' for this transmission (1-32). It is directly
+tied to the TIS-B Site ID.
 """
   parser = argparse.ArgumentParser(description= hlpText, \
           formatter_class=RawTextHelpFormatter)
@@ -1582,6 +1652,8 @@ number of packets received is zero. Some planes never report any packets.
     help="Don't fix trailing zeros.", action='store_true')
   parser.add_argument("--apd", \
     help='Do a partial decode of ADS-B messages.', action='store_true')
+  parser.add_argument("--fet", \
+    help='Show FIS-B extra timing information.', action='store_true')
   parser.add_argument("--f6b", required=False, \
     help='Hex strings of first 6 bytes of block zero.')
   parser.add_argument("--se", required=False, \
@@ -1608,6 +1680,9 @@ number of packets received is zero. Some planes never report any packets.
 
   if args.apd:
     adsb_partial_decode = True
+
+  if args.fet:
+    fisb_extra_timing = True
 
   if args.se:
     dir_out_errors = args.se
