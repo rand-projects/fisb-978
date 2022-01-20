@@ -627,6 +627,7 @@ def computePercentAboveAveOne(bits, aveOne, adjFactor):
 
   aboveAveBits = np.sum(np.where(bits >= aveOneAdj, 1, 0))
   ave = aboveAveBits / bits.size
+
   return ave
 
 def fixZeros(block):
@@ -681,8 +682,8 @@ def fixZeros(block):
   startValue = 576
   foundAnyZeros = False
 
-  # Dived the block into 128 bit 'quarters', starting from the back.
-  for i in range(576, 63, -128):
+  # Divide the block into 128 bit 'quarters', starting from the back.
+  for i in range(576, 64, -128):
     sample = block[i-128:i]
     percentAboveAveOne = computePercentAboveAveOne(sample, aveOne, 1.10)
     if percentAboveAveOne > 0.02:
