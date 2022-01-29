@@ -24,7 +24,7 @@ import select
 import sys
 
 #: Maximum simultaneous connections allowed.
-MAX_CONNECTIONS = 5
+MAX_CONNECTIONS = 10
 
 # Default TCP port to use (changable with --port).
 port = 3333
