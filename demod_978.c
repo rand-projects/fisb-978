@@ -5,8 +5,8 @@
  * Assumes samples of 2 samples per data bit or 2,083,334 samples/sec. Samples
  * should be complex int 16 (CS16).
  * 
- * SDR samples are demodulated into packets of signed 32-bit integers. Attributes of each
- * packet (whether FIS-B or ADS-B, arrival time, signal strength) are
+ * SDR samples are demodulated into packets of signed 32-bit integers. Attributes of
+ * each packet (whether FIS-B or ADS-B, arrival time, signal strength) are
  * stored in a string and sent to standard output. This is followed up
  * with the actual packet data as signed 32-bit integers. These values are then
  * received and processed by the standard input of <b>ec_978.py</b>.
@@ -75,16 +75,16 @@
  * 
  * Example attribute string: <b>1638556942.209000.F.05182170.1 </b>
  * 
- * <em>CAUTION</em>: This program is designed for raw speed, so many items are put in
- * globals to avoid passing them around. 
+ * <em>CAUTION</em>: This program is designed for raw speed, so many items are put
+ * in globals to avoid passing them around. 
  * 
  * <em>CAUTION</em>: The program makes unapologetic use of type-punning. As such, GCC
  * is required for compilation (or some other compiler that does the
  * correct thing for type-punning). Lots of normal coding
  * conventions are ignored in the interest of faster execution speeds.
  * 
- * <em>CAUTION</em>: <b>demod_978</b> assumes the data is reasonably filtered. If you are not
- * getting the performance you think you should be getting, capture some
+ * <em>CAUTION</em>: <b>demod_978</b> assumes the data is reasonably filtered. If
+ * you are not getting the performance you think you should be getting, capture some
  * data and view it with a tool like '<em>inspectrum</em>' to verify adequate
  * filtering. 
  * 
