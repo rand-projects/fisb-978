@@ -1,5 +1,5 @@
 CC=gcc
-CFLAGS=-I. -O3 -Wall -funroll-loops
+CFLAGS=-I. -O3 -Wall -funroll-loops -lm
 DEPS = 
 OBJ = demod_978.o
 

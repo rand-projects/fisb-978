@@ -51,10 +51,10 @@
  *      it won't work. The -x argument will make sure the times on the packet
  *      filename will sort correctly and make sense. Optional.</dd>
  * </dl>
- * Data packets are sent to standard output preceeded with a 30 character
+ * Data packets are sent to standard output preceeded with a 36 character
  * attribute string which has the following format:
  * <p>
- * <b>&lt;secs&gt;.&lt;usecs&gt;.&lt;t&gt;.&lt;level&gt;.&lt;syncerr&gt;</b>
+ * <b>&lt;secs&gt;.&lt;usecs&gt;.&lt;t&gt;.&lt;level&gt;.&lt;syncerr&gt;.&lt;rssi&gt;</b>
  * 
  * <dl>
  * <dt>&lt;secs&gt;</dt>
@@ -72,8 +72,11 @@
  * <dt>&lt;syncerr&gt;</dt>
  *  <dd>Number of sync errors (will be 0 - 4).</dd>
  * </dl>
+ * <dt>&lt;rssi&gt;</dt>
+ *  <dd>RSSI value. Divide this number by 10 to get the floating point value.</dd>
+ * </dl>
  * 
- * Example attribute string: <b>1638556942.209000.F.05182170.1 </b>
+ * Example attribute string: <b>1638556942.209000.F.05182170.1.-0201 </b>
  * 
  * <em>CAUTION</em>: This program is designed for raw speed, so many items are put
  * in globals to avoid passing them around. 
@@ -101,6 +104,7 @@
 #include <sys/time.h>
 #include <time.h>
 #include <string.h>
+#include <math.h>
 
 /// Number of times a second we want to read data. This will affect 
 /// the size of the raw sample read buffer. (<code>10</code>)
@@ -146,8 +150,8 @@
 #define SAMPLE_TIME_USECS     0.48
 
 /// This is the length of the attribute string that we send before
-/// every packet. (<code>30</code>)
-#define ATTRIBUTE_LEN         30
+/// every packet. (<code>36</code>)
+#define ATTRIBUTE_LEN         36
 
 /// running_total() keeps a record of the baseline signal level.
 /// We only check sync when the signal is higher than this value.
@@ -238,6 +242,7 @@ struct timeval time_of_read;
 /// Current running total. Proxy for signal strength.
 /// See documentation for running_total() for details.
 u_int32_t current_running_total = 0;
+double p_current_running_total = 0.0;
 
 /// Array of last 72 samples for running total().
 /// 72 denotes 72 samples which is the length of
@@ -245,11 +250,13 @@ u_int32_t current_running_total = 0;
 /// Only used by running_total().
 /// Could be static, but function is inline.
 int32_t running_total_samples[72] = {0};
+double p_running_total_samples[72] = {0.0};
 
 /// Index into <code>running_total_samples</code>.
 /// Only used by running_total().
 /// Could be static, but function is inline.
 u_int8_t running_total_start = 0;
+u_int8_t p_running_total_start = 0;
 
 /// Total value of running_total not normalized.
 /// <code>current_running_total</code> is this value / 72
@@ -257,6 +264,7 @@ u_int8_t running_total_start = 0;
 /// Only used by running_total().
 /// Could be static, but function is inline.
 u_int32_t running_total_total = 0;
+double p_running_total_total = 0;
 
 /* Variables related to detecting sync codes. */
 
@@ -272,6 +280,48 @@ u_int64_t syncB = 0;
 
 /// Filehandle for buffered stdout.
 FILE *stdoutbuf;
+
+/**
+ * @brief Update the running total of IQ power
+ * 
+ * power_running_total() keeps a running total of the last 72
+ * values of I^2 + Q^2 for future rssi calculation.
+ *
+ * For the last 72 values, we compute the average distance
+ * from the zero level. We do this by adding the absolute value
+ * of all samples then dividing by 72. Noise levels are usually
+ * quite low and actual signal is considerably higher.
+ * 
+ * This value is used by process_sample() to see if we need to
+ * check the sync.
+ * 
+ * @param new_sample Integer value of current sample.
+ * 
+ * Updates global: <code>running_total</code>.
+ */
+inline void p_running_total(int32_t realVal, int32_t imagVal) {
+  
+  double r = (double) realVal;
+  double i = (double) imagVal;
+
+  // Convert to power (I^2 + Q^2)
+  // (uses dump978-fa formula)
+  double power = ((r*r) + (i*i)) / 32768.0 / 32768.0;
+  
+  // To make a fast running total, we keep all 72 values in
+  // an array. For each new value we add it to the total and
+  // the array and remove the earliest one.
+  p_running_total_total = p_running_total_total - 
+    p_running_total_samples[p_running_total_start] + power;
+  p_running_total_samples[p_running_total_start++] = power;
+
+  // Reset pointer to 0 if needed.
+  if (p_running_total_start == 72)
+    p_running_total_start = 0;
+
+  // Normalize running total and update global.
+  p_current_running_total = p_running_total_total / 72.0;
+}
 
 /**
  * @brief Update the current signal strength
@@ -311,7 +361,6 @@ inline void running_total(int32_t new_sample) {
   // Normalize running total and update global.
   current_running_total = running_total_total / 72;
 }
-
 
 /**
  * @brief Check sync word for 4 or less errors.
@@ -480,6 +529,9 @@ int32_t demod_one() {
   // Update running total with new sample.
   running_total(sample);
 
+  // Update power running total
+  p_running_total(demodN0real, demodN0imag);
+
   return sample;
 }
 
@@ -534,13 +586,25 @@ void write_packet(bool isFisb) {
     typeChar = 'A';
   }
   
+  // Calculate rssi. p_current_running_total is the average power per sample
+  // for the last sync block. The extra * 10 is to get the decimal into
+  // an integer form.
+  double rssi = 10.0 * 10.0 * log10(p_current_running_total);
+  //fprintf(stderr, "rssi='%05.0lf'\n", rssi);
+  
   // Write packet attributes to string. Double check current_running_total
   // is in bounds. If not, force it in bounds.
   if (current_running_total >= 1000000000) {
     current_running_total = 99999999;
   }
-  sprintf(attributes,"%lu.%06ld.%c.%08d.%d", time_secs,
-      actual_usecs, typeChar, current_running_total, last_sync_errors);
+
+  // Double check actual_usecs < 1 million
+  if (actual_usecs >= 1000000) {
+    actual_usecs = 999999;
+  }
+
+  sprintf(attributes,"%lu.%06ld.%c.%08d.%d.%05.0lf", time_secs,
+      actual_usecs, typeChar, current_running_total, last_sync_errors, rssi);
 
   // double to check to make sure this is ATTRIBUTE_LEN
   if (strlen(attributes) != ATTRIBUTE_LEN) {

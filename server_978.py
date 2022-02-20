@@ -173,11 +173,21 @@ def main():
             sock = filenoDict[fno]
 
             # Read data, but we don't care or use the data.
-            data = sock.recv(10)
-          
+            # We can get an RST packet, so catch that.
+            rstCloseType = False
+            try:
+              data = sock.recv(10)
+            except ConnectionResetError:
+              data = None
+              rstCloseType = True
+              
             # If no data, close connection.
             if not data:
-              print(f'Disconnect from client', file=sys.stderr)
+              if rstCloseType:
+                closeString = 'RST disconnect from client'
+              else:
+                closeString = 'Disconnect from client'
+              print(closeString, file=sys.stderr)
               sock.close()
 
               outputs.remove(fno)
@@ -197,8 +207,11 @@ def main():
         # Write data to clients.
         if (line != None) and (fno is not filenoStdin) \
               and (fno is not filenoServer):
-          sock = filenoDict[fno]
-          sock.sendall(line.encode())
+          
+          # fno can get deleted before getting here, so double check.
+          if fno in filenoDict:
+            sock = filenoDict[fno]
+            sock.sendall(line.encode())
 
       for fno in exceptional:
         if fno is not filenoStdin:

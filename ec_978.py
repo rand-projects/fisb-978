@@ -73,10 +73,10 @@ UPLINK_FEEDBACK_TABLE = [ '0', '1-13', '14-21', '22-25', '26-28', \
 
 # Maps UAT data channel to the power of the station and TIS-B site id.
 FISB_DATA_CHANNEL = [ \
-    'H15','H14','H13','M12','M11','M10','L8','L5|S3', \
-    'H15','H14','H13','M12','M11','L9','L7','L6|S2', \
-    'H15','H14','H13','M12','M10','L9','L7','L6|S1', \
-    'H15','H14','H13','M11','M10','L8', 'L6','S4']
+    '15H','14H','13H','12M','11M','10M','08L','05L/03S', \
+    '15H','14H','13H','12M','11M','09L','07L','06L/02S', \
+    '15H','14H','13H','12M','10M','09L','07L','06L/01S', \
+    '15H','14H','13H','11M','10M','08L','06L','04S']
 
 # Base 40 table for decoding the call signs of ADS-B packets.
 BASE40_TABLE = ['0','1','2','3','4','5','6','7','8','9', \
@@ -91,7 +91,7 @@ BITS_PER_BLOCK = 4416
 BYTES_PER_BLOCK = BITS_PER_BLOCK // 8
 
 #: Length of attribute string sent with each packet.
-ATTRIBUTE_LEN = 30
+ATTRIBUTE_LEN = 36
 
 #: Size of a FIS-B packet in bytes.
 #: Derived from ((4416 * 2) + 3) * 4.
@@ -119,6 +119,10 @@ adsb_partial_decode = False
 
 # If True, show extra FIS-B timing information in FIS-B comment.
 fisb_extra_timing = False
+
+# If True, transform output to mimic dump978 or dump978-fa format
+output_d978 = False
+output_d978fa = False
 
 # Directory and flag for writing error files.
 dir_out_errors = None
@@ -880,15 +884,16 @@ def adsbDecode(samples, offset, isShort):
 
   if status:
     # These don't always decode correctly. Make sure that short messages are 
-    # always payload type 0, and long messages are always payload types 1 to 14.
+    # always payload type 0 or 12, and long messages are always payload types
+    # 1 to 14 (excluding 12).
     # Also make sure the length of the hex string matches the payload type.
     hexBlockLen = len(hexBlock)
     byte0 = bytes.fromhex(hexBlock[0:2])[0]
     payloadTypeCode = (byte0 & 0xF8) >> 3
 
-    if (payloadTypeCode == 0) and (hexBlockLen == 36):
+    if (payloadTypeCode in [0, 12]) and (hexBlockLen == 36):
       return True, hexBlock, errs
-    elif payloadTypeCode in [1,2,3,4,5,6,11,12,13,14] \
+    elif payloadTypeCode in [1,2,3,4,5,6,11,13,14] \
         and (hexBlockLen == 68):
       return True, hexBlock, errs
 
@@ -934,6 +939,20 @@ def fisbHexBlocksToHexString(hexBlocks):
     hexBlocks[3] + hexBlocks[4] + hexBlocks[5]
 
 def fisbTimingDecode(hexBlock0, timeStr):
+  """
+  Given the first hex block of a FIS-B message (as a string)
+  and the time of arrival,
+  calculate a string containing the site-id, data channel, mso,
+  slot-id, message delay time.
+
+  Args:
+    hexBlock0 (str): String of hex bytes for block 0.
+    timeStr (str): Epoch UTC time the message arrived.
+
+  Returns:
+    str: String with additional information about the timing of this
+    message.
+  """
   # Turn hexBlock0 into bytes array and extract slotId and TIS-B site ID
   block0Bytes = bytes.fromhex(hexBlock0)
   slotId = block0Bytes[6] & 0x1f
@@ -1187,6 +1206,61 @@ def adsbHexBlockFormatted(hexBlock, signalStrengthStr, timeStr, errs, \
   return '-' + hexBlock + ';rs=' + str(syncErrors) + '/' + str(errs) + \
        f'{decodeStr};ss=' + signalStrengthStr + ';t=' + timeStr
 
+def fixupResultForD978(resultStr, output_d978fa):
+  """
+  For programs that require the strict output format of dump978 or dump978-fa,
+  this routine will edit the result string and return a new string with  
+  the desired output.
+
+  All strings contain the message itself. The 'rs=' reed-solomon errors are
+  printed only if there are any. Only a single total number is printed. Since 
+  FISB-978 stops looking for FISB errors if it doesn't have to process all the
+  packets, only the errors actually found are used.
+
+  If this is dump978-fa format, the time and rssi values will always be included.
+  For original dump-978, these are always missing.
+
+  Args:
+    resultStr (str): Usual FISB-978 result string.
+    output_d978fa (bool): True if the output is to be in dump978-fa format.
+      Otherwise will be in dump978 format.
+
+  Returns:
+    str: Edited result string in proper format.
+  """
+  parts = resultStr.split(';')
+
+  # Put reed-solomon only if there are any errors.
+  # For FIS-B, stop counting for amounts over 90, these are messages parts that
+  # don't need to be checked.
+  rsStr = parts[1].split('/')[1]
+  if ':' in rsStr:
+    rsSplit = rsStr.split(':') 
+    totalErrs = 0
+    for i in rsSplit:
+      x = int(i)
+      if x > 90:
+        break
+      totalErrs += x
+  else:
+    totalErrs = int(rsStr)
+
+  # Start building result string.
+  newResultStr = parts[0]
+  if totalErrs > 0:
+    newResultStr += ';rs=' + str(totalErrs)
+
+  # Add d978-fa only items
+  if output_d978fa:
+    rssiStr = parts[2].split('/')[1]
+    tiStr = parts[3][2:]
+    newResultStr += ';rssi=' + rssiStr + ';t=' + tiStr
+
+  # Always add ';' to end
+  newResultStr += ';'
+
+  return newResultStr
+
 def fisbProcessPacket(samples, timeStr, signalStrengthStr, syncErrors, \
     attrStr):
   """
@@ -1238,7 +1312,7 @@ def fisbProcessPacket(samples, timeStr, signalStrengthStr, syncErrors, \
   # Did not error correct.
   hexErrsStr = fisbHexErrsToStr(hexErrs)
 
-  if show_failed_fisb:
+  if show_failed_fisb and (output_d978 == False) and (output_d978fa == False):
 
     failStr = f'#FAILED-FIS-B {syncErrors}/{hexErrsStr} ss={signalStrengthStr}' + \
       f' t={timeStr} {attrStr}'
@@ -1281,13 +1355,13 @@ def adsbProcessPacket(samples, timeStr, signalStrengthStr, syncErrors, \
   # Starting offset is 1. This is where tha actual sample data begins.
   offset = 1
 
-  # Try to guess if this is a short message (1st 5 bits 0). We will try both
+  # Try to guess if this is a short message (1st 5 bits 0 or 12). We will try both
   # ways, but try to start with the most likely candidate.
-  isShort = True #assume short
-  for x in range(1, 10, 2):
-    if samples[x] <= 0:
-      isShort = False
-      break
+  isShort = False #assume long
+  first5Bits = (samples[1] << 4) | (samples[3] << 3) | (samples[5] << 2) | \
+      (samples[7] << 1) | samples[9]
+  if first5Bits in [0, 12]:
+      isShort = True
   
   # Error corrections are sorted by the % of the time they match. I.e. we try the
   # things most likely to work most of the time first.
@@ -1319,7 +1393,7 @@ def adsbProcessPacket(samples, timeStr, signalStrengthStr, syncErrors, \
         timeStr, errs, syncErrors), isShort
 
   # Did not error correct.
-  if show_failed_adsb:
+  if show_failed_adsb and (output_d978 == False) and (output_d978fa == False):
 
     failStr = f'#FAILED-ADS-B {syncErrors}/{errs} ss={signalStrengthStr}' + \
       f' t={timeStr} {attrStr}'
@@ -1369,10 +1443,13 @@ def main():
       # file components.
       timeStr = splitName[0] + '.' + splitName[1][0:3]
       rawSignalStrength = round(int(splitName[3]) / 1000000.0, 2)
-      signalStrengthString = str(rawSignalStrength)
             
       # Extract sync errors
       syncErrors = splitName[4]
+
+      # Extract rssi
+      rssi = float(splitName[5]) / 10.0
+      signalStrengthString = str(rawSignalStrength) + '/' + str(rssi)
 
       # Detect if this an a FIS-B packet ('F') or ADS-B packet ('A').
       if (splitName[2] == 'F'):
@@ -1415,6 +1492,11 @@ def main():
                 lowest_adsbl_level = rawSignalStrength
                 print(f'lowest ADS-B (L) signal: {lowest_adsbl_level}', \
                     flush=True, file=sys.stderr)
+
+
+        # Edit result if we need to be compatible with dump978 or dump978-fa
+        if output_d978fa or output_d978:
+          resultStr = fixupResultForD978(resultStr, output_d978fa)
 
         # Write to standard output.
         print(resultStr, flush=True)
@@ -1636,6 +1718,15 @@ ground station. It defines which data channels will be used.
 
 '4' is the 'Data Channel' for this transmission (1-32). It is directly
 tied to the TIS-B Site ID.
+
+d978, d978fa
+============
+If you are piping the output of FISB-978 to a program that expects
+output from the original dump-978 or Flight Aware's dump-978 programs,
+you can supply '--d978' or '--d978fa' to produce the exact output those
+programs would produce. Note that this includes less information than
+FISB-978 normally produces. All ADS-B and FIS-B errors are also
+suppressed. It is also an error to use both switches at once.
 """
   parser = argparse.ArgumentParser(description= hlpText, \
           formatter_class=RawTextHelpFormatter)
@@ -1661,8 +1752,23 @@ tied to the TIS-B Site ID.
     help='Directory to save failed error corrections.')
   parser.add_argument("--re", required=False, \
     help='Directory to reprocess errors.')
+  parser.add_argument("--d978", \
+    help='Mimic dump978 output format.', action='store_true')
+  parser.add_argument("--d978fa", \
+    help='Mimic dump978-fa output format.', action='store_true')
 
   args = parser.parse_args()
+
+  if args.d978:
+    output_d978 = True
+
+  if args.d978fa:
+    output_d978fa = True
+
+  # Can only have one of d978 or d978fa as True
+  if (output_d978fa and output_d978):
+    print('Only one of --d978 or --d978fa can be set at a time.', file=sys.stderr)
+    sys.exit(1)
 
   if args.ff:
     show_failed_fisb = True
