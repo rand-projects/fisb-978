@@ -305,8 +305,9 @@ inline void p_running_total(int32_t realVal, int32_t imagVal) {
   double i = (double) imagVal;
 
   // Convert to power (I^2 + Q^2)
-  // (uses dump978-fa formula)
-  double power = ((r*r) + (i*i)) / 32768.0 / 32768.0;
+  // Uses dump978-fa formula but with 131071.0 (2^17 - 1) as the scaler.
+  // This produces RSSI values very similar to dump978-fa
+  double power = ((r*r) + (i*i)) / 131071.0 / 131071.0;
   
   // To make a fast running total, we keep all 72 values in
   // an array. For each new value we add it to the total and
@@ -588,9 +589,8 @@ void write_packet(bool isFisb) {
   
   // Calculate rssi. p_current_running_total is the average power per sample
   // for the last sync block. The extra * 10 is to get the decimal into
-  // an integer form.
+  // an integer form (ec_978.py will divide by 10 later).
   double rssi = 10.0 * 10.0 * log10(p_current_running_total);
-  //fprintf(stderr, "rssi='%05.0lf'\n", rssi);
   
   // Write packet attributes to string. Double check current_running_total
   // is in bounds. If not, force it in bounds.
