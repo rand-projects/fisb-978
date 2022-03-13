@@ -29,6 +29,11 @@ Python Modules
    :undoc-members:                                                                              
    :show-inheritance:                                                                           
 
+.. automodule::  eye
+   :members:                                                                                    
+   :undoc-members:                                                                              
+   :show-inheritance:                                                                           
+
 C Code
 ======
 

@@ -135,6 +135,11 @@ show_lowest_levels = False
 # Set by --bzfb flag.
 block_zero_fixed_bits = True
 
+# Set to True by --saveraw argument. If true, the data we get from
+# demod_978 is save to a disk file, one file per packet. Used for
+# evaluation, such as eye diagrams.
+save_raw_data_to_disk = False
+
 # Repair blocks that end in trailing zeros.
 fix_trailing_zeros = True
 
@@ -1462,6 +1467,11 @@ def main():
       # Read packet as a set of bytes
       packetBuf = sys.stdin.buffer.read(packetLength)
 
+      # Save to file if we are saving data for further study.
+      if save_raw_data_to_disk:
+        with open(timeStr + '.' + splitName[2] + '.i32', 'wb') as bfile:
+          bfile.write(packetBuf)
+
       # Numpy will convert the bytes to int32's
       packet = np.frombuffer(packetBuf, np.int32)
 
@@ -1727,6 +1737,15 @@ you can supply '--d978' or '--d978fa' to produce the exact output those
 programs would produce. Note that this includes less information than
 FISB-978 normally produces. All ADS-B and FIS-B errors are also
 suppressed. It is also an error to use both switches at once.
+
+saveraw
+=======
+Saves the raw demod_978 output in a disk file. This is usually done
+briefly for later analysis (such as for eye diagrams). Each packet
+is save in its own file. The files are saved in the current directory
+and have a name of the form: '1646349680.227.F.i32' where
+'1646349680.227' is the UTC epoch time of arrival, 'F' means FIS-B
+('A' means ADS-B, either short or long). The extension is always '.i32'.
 """
   parser = argparse.ArgumentParser(description= hlpText, \
           formatter_class=RawTextHelpFormatter)
@@ -1756,6 +1775,8 @@ suppressed. It is also an error to use both switches at once.
     help='Mimic dump978 output format.', action='store_true')
   parser.add_argument("--d978fa", \
     help='Mimic dump978-fa output format.', action='store_true')
+  parser.add_argument("--saveraw", \
+    help='Save demod_978 output in file.', action='store_true')
 
   args = parser.parse_args()
 
@@ -1794,6 +1815,9 @@ suppressed. It is also an error to use both switches at once.
   if args.se:
     dir_out_errors = args.se
     writingErrorFiles = True
+
+  if args.saveraw:
+    save_raw_data_to_disk = True
 
   # If using 1st 6 bytes of block zero. May have more than one set of bytes
   # separated by whitspace.
