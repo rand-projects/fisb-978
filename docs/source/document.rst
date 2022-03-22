@@ -407,9 +407,6 @@ or arctangent calculations. This technique is from Richard Lyons in *Understandi
 Digital Signal Processing, Second Edition*. You can find an explanation of this
 technique `here <https://www.embedded.com/dsp-tricks-frequency-demodulation-algorithms/>`_.
 
-If you were taking more samples per second, you would want something other
-than ``n-2``. For our bit rate, ``2`` produces the best results.
-
 The denominator of this equation is for scaling. For our calculations
 we ignore it. Empirically, you will get slightly more decodes with scaling, but
 none that can't be corrected in ``ec_978.py``.
