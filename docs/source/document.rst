@@ -394,9 +394,9 @@ real and complex parts being 16 bit integers.
 
 Demodulation is accomplished using the formula: ::
 
-          (I[n-2] * Q[n]) - (I[n] * Q[n-2])
+          (i[n-2] * q[n]) - (i[n] * q[n-2])
  sample = ---------------------------------
-                 I^2[n] + Q^2[n]
+                 i^2[n] + q^2[n]
 
  where n is the current sample and n-2 is the sample 2 samples before
        the current sample.
