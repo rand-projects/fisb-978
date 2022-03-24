@@ -1047,6 +1047,17 @@ by only showing 20% of the data.
 
 .. image:: images/eye6.png
 
+For reference purposes, here are examples from a FIS-B transmission received
+a few hundred feet from a tower. These represent the 'gold standard' of 
+reception.
+
+.. image:: images/eye11.png
+.. image:: images/eye12.png
+.. image:: images/eye13.png
+.. image:: images/eye14.png
+.. image:: images/eye15.png
+.. image:: images/eye16.png
+
 Building Documentation
 ======================
 
