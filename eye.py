@@ -23,8 +23,6 @@ import argparse
 from argparse import RawTextHelpFormatter
 import matplotlib.pyplot as plt
 import matplotlib
-from commpy.filters import rrcosfilter
-from commpy.filters import rcosfilter
 from scipy import signal
 from colour import Color
 
